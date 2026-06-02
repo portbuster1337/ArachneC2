@@ -19,9 +19,11 @@ fleet and operator are all equal peers in the network — no central point of fa
 - DHT-based peer discovery — no hardcoded server IPs
 - Encrypted and signed messages (Ed25519 + NaCl box)
 - Interactive operator console (list, select, exec, ls, ps, cd, pwd, download, upload)
+- Interactive shell with PTY over direct libp2p stream (bash/zsh/sh)
+- Port forwarding through implant via direct libp2p stream
 - Cross-platform implants (Linux, macOS, Windows)
 - Protocol Buffers message format with per-message signature verification
-- Built-in hole punching for NAT traversal
+- Built-in hole punching and NAT traversal
 
 ## Project Structure
 
@@ -33,7 +35,7 @@ arachne-c2/
 │   └── build-implant/      # Tool to embed operator pubkey into implant binary
 ├── docs/                   # Design documentation
 ├── implant/                # Implant agent code
-│   └── core/               # Agent runtime, command handlers
+│   └── core/               # Agent runtime, command handlers, shell, portfwd
 ├── pkg/
 │   ├── config/             # Shared config types
 │   ├── cryptography/       # Ed25519 + NaCl key management
@@ -48,7 +50,7 @@ arachne-c2/
 
 ## Build
 
-Requires Go 1.21+. The build script auto-installs Go if missing:
+Requires Go 1.22+. The build script auto-installs Go and UPX if missing:
 
 ```bash
 ./build.sh
@@ -106,7 +108,8 @@ arachne (user@hostname) > exec whoami
 ```
 
 Available commands: `list`, `select <n>`, `exec <cmd>`, `ls <path>`, `cd <path>`,
-`pwd`, `ps`, `download <path>`, `upload <path>`, `help`, `exit`.
+`pwd`, `ps`, `shell`, `portfwd <port> <host:p>`, `download <path>`, `upload <path>`,
+`help`, `exit`.
 
 ## Security
 
