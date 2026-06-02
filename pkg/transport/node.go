@@ -23,6 +23,8 @@ import (
 
 const (
 	ArachneProtocolID  protocol.ID = "/arachne/1.0.0"
+	ShellProtocolID    protocol.ID = "/arachne/shell/1.0.0"
+	SocksProtocolID    protocol.ID = "/arachne/socks/1.0.0"
 	CommandTopicPrefix  string     = "/arachne/"
 	BeaconTopicPrefix   string     = "/arachne/"
 	TaskTopicPrefix     string     = "/arachne/"

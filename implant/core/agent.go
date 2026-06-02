@@ -141,6 +141,8 @@ func (a *Agent) Start() error {
 		go a.discoverOperatorLoop(ns)
 	}
 
+	a.node.SetStreamHandler(transport.ShellProtocolID, a.handleShellStream)
+
 	go a.beaconLoop()
 
 	return nil

