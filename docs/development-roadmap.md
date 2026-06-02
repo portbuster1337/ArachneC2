@@ -19,17 +19,17 @@
 - [x] File system operations (ls, cd, pwd, download, upload)
 - [x] Process enumeration (ps)
 - [x] Command execution (execute)
-- [ ] Interactive shell (shell with PTY)
+- [x] Interactive shell (shell with PTY — direct libp2p stream)
 - [x] Screenshot capture (stub)
 - [~] Cross-platform support (Linux tested, Windows/macOS pending)
 - [x] Beacon interval + jitter configuration
 
 ## Phase 3: Interactive Sessions (Weeks 9-10)
-- [ ] Direct libp2p stream establishment
-- [ ] Interactive shell with PTY support
-- [ ] Port forwarding
-- [ ] SOCKS5 proxy through implant
+- [x] Direct libp2p stream establishment
+- [x] Interactive shell with PTY support
+- [ ] Reverse SOCKS proxy (implant-side proxy server)
 - [ ] Session multiplexing
+- [~] Port forwarding → planned via IPFS exfiltration (see Phase 4)
 
 ## Phase 4: IPFS Integration (Weeks 11-12)
 - [ ] IPFS data exfiltration (CID-based file transfer)
@@ -68,6 +68,7 @@
 | Serialization | Protocol Buffers (proto3) |
 | DHT | [go-libp2p-kad-dht](https://github.com/libp2p/go-libp2p-kad-dht) |
 | Relay | [go-libp2p-circuit](https://github.com/libp2p/go-libp2p-circuit) |
+| PTY | [creack/pty](https://github.com/creack/pty) |
 | IPFS | [go-ipfs-api](https://github.com/ipfs/go-ipfs-api) or embedded |
 | CLI | [Cobra](https://github.com/spf13/cobra) |
 | TUI | [Bubble Tea](https://github.com/charmbracelet/bubbletea) |
