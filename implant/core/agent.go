@@ -146,17 +146,14 @@ func (a *Agent) Start() error {
 func (a *Agent) discoverOperatorLoop(ns string) {
 	log.Printf("[implant] DHT discovery started for: %s", ns)
 	for a.node.DHT == nil || a.node.DHT.RoutingTable().Size() == 0 {
-		log.Printf("[implant] DHT routing table empty, waiting for bootstrap...")
 		select {
 		case <-a.ctx.Done():
 			return
 		case <-time.After(2 * time.Second):
 		}
 	}
-	log.Printf("[implant] DHT routing table has %d peers, querying for operator", a.node.DHT.RoutingTable().Size())
 
 	for {
-		log.Printf("[implant] querying DHT for operator...")
 		peerCh, err := a.node.FindPeers(a.ctx, ns)
 		if err != nil {
 			log.Printf("[implant] DHT find peers: %v", err)

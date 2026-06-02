@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -98,7 +97,6 @@ func (o *Operator) Start() error {
 
 		ns := o.messenger.RendezvousString()
 		if o.node.DHT != nil {
-			log.Printf("[operator] advertising on DHT rendezvous: %s", ns)
 			go func() {
 				for o.node.DHT.RoutingTable().Size() == 0 {
 					select {
@@ -107,22 +105,13 @@ func (o *Operator) Start() error {
 					case <-time.After(2 * time.Second):
 					}
 				}
-				log.Printf("[operator] DHT routing table has %d peers, starting advertise", o.node.DHT.RoutingTable().Size())
-				for {
-					if err := o.node.Advertise(o.ctx, ns); err != nil {
-						if !strings.Contains(err.Error(), "failed to find any peer") {
-							log.Printf("[operator] advertise: %v", err)
-						}
-					} else {
-						break
-					}
+				for o.node.Advertise(o.ctx, ns) != nil {
 					select {
 					case <-o.ctx.Done():
 						return
 					case <-time.After(10 * time.Second):
 					}
 				}
-				log.Printf("[operator] advertise succeeded on %s", ns)
 				for {
 					o.node.Advertise(o.ctx, ns)
 					select {
