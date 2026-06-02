@@ -12,16 +12,22 @@ import (
 )
 
 func Run(relayAddrs []string) error {
+	if err := os.MkdirAll(arachneDir(), 0700); err != nil {
+		return fmt.Errorf("create arachne directory: %w", err)
+	}
+
 	keys, err := cryptography.LoadOrGenerateOperatorKey(keyPath())
 	if err != nil {
 		return fmt.Errorf("load operator key: %w", err)
 	}
 
 	pubPath := pubKeyPath()
-	pubBytes, err := crypto.MarshalPublicKey(keys.PublicKey)
-	if err == nil {
-		if err := os.WriteFile(pubPath, pubBytes, 0644); err == nil {
-			log.Printf("[operator] public key exported: %s", pubPath)
+	if _, err := os.Stat(pubPath); os.IsNotExist(err) {
+		pubBytes, err := crypto.MarshalPublicKey(keys.PublicKey)
+		if err == nil {
+			if err := os.WriteFile(pubPath, pubBytes, 0644); err == nil {
+				log.Printf("[operator] public key exported: %s", pubPath)
+			}
 		}
 	}
 
@@ -44,18 +50,18 @@ func Run(relayAddrs []string) error {
 	return nil
 }
 
-func keyPath() string {
-	exe, err := os.Executable()
-	if err == nil {
-		return filepath.Join(filepath.Dir(exe), "operator.key")
+func arachneDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".arachne"
 	}
-	return "operator.key"
+	return filepath.Join(home, ".arachne")
+}
+
+func keyPath() string {
+	return filepath.Join(arachneDir(), "operator.key")
 }
 
 func pubKeyPath() string {
-	exe, err := os.Executable()
-	if err == nil {
-		return filepath.Join(filepath.Dir(exe), "operator.pub")
-	}
-	return "operator.pub"
+	return filepath.Join(arachneDir(), "operator.pub")
 }

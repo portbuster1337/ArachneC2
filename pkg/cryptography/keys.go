@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -146,6 +147,10 @@ func LoadOrGenerateOperatorKey(path string) (*OperatorKey, error) {
 	marshaled, err := MarshalPrivateKey(key.PrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("marshal key: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return nil, fmt.Errorf("create key directory: %w", err)
 	}
 
 	if err := os.WriteFile(path, marshaled, 0600); err != nil {

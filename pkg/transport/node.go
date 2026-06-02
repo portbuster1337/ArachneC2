@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -171,10 +172,12 @@ func (n *Node) StartDiscovery() error {
 		for _, pi := range n.config.BootstrapPeers {
 			connectCtx, cancel := context.WithTimeout(n.ctx, 5*time.Second)
 			if err := n.Host.Connect(connectCtx, pi); err != nil {
+				log.Printf("[discovery] bootstrap %s: %v", pi.ID.String(), err)
 				cancel()
 				continue
 			}
 			cancel()
+			log.Printf("[discovery] connected to bootstrap: %s", pi.ID.String())
 		}
 	}()
 

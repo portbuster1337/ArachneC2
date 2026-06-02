@@ -10,14 +10,18 @@ import (
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		log.Fatalf("usage: build-implant <operator.pub> [output-path]")
-	}
+	pubPath := defaultPubKeyPath()
+	outputPath := "bin/implant"
 
-	pubPath := os.Args[1]
-	outputPath := "arachne-implant"
-	if len(os.Args) > 2 {
+	switch len(os.Args) {
+	case 1:
+	case 2:
+		pubPath = os.Args[1]
+	case 3:
+		pubPath = os.Args[1]
 		outputPath = os.Args[2]
+	default:
+		log.Fatalf("usage: build-implant [<operator.pub>] [<output-path>]")
 	}
 	data, err := os.ReadFile(pubPath)
 	if err != nil {
@@ -47,7 +51,7 @@ var embeddedOperatorPubKey = %s
 	}
 	log.Printf("wrote %s (%d bytes embedded)", genPath, len(data))
 
-	outPath := outputPath
+	outPath := filepath.Join(root, outputPath)
 
 	goBinary := "go"
 	if goroot := os.Getenv("GOROOT"); goroot != "" {
@@ -67,6 +71,7 @@ var embeddedOperatorPubKey = %s
 
 	if upxPath, err := exec.LookPath("upx"); err == nil {
 		upx := exec.Command(upxPath, "--best", "--lzma", outPath)
+		upx.Dir = root
 		upx.Stdout = os.Stdout
 		upx.Stderr = os.Stderr
 		if err := upx.Run(); err != nil {
@@ -75,6 +80,14 @@ var embeddedOperatorPubKey = %s
 	} else {
 		log.Printf("upx not found, skipping compression")
 	}
+}
+
+func defaultPubKeyPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "operator.pub"
+	}
+	return filepath.Join(home, ".arachne", "operator.pub")
 }
 
 func findProjectRoot() (string, error) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -95,21 +96,42 @@ func (o *Operator) Start() error {
 		return fmt.Errorf("discovery: %w", err)
 	}
 
-	ns := o.messenger.RendezvousString()
-	if o.node.DHT != nil {
-		log.Printf("[operator] advertising on DHT rendezvous: %s", ns)
-		go func() {
-			for {
-				if err := o.node.Advertise(o.ctx, ns); err != nil {
-					log.Printf("[operator] advertise: %v", err)
+		ns := o.messenger.RendezvousString()
+		if o.node.DHT != nil {
+			log.Printf("[operator] advertising on DHT rendezvous: %s", ns)
+			go func() {
+				for o.node.DHT.RoutingTable().Size() == 0 {
+					select {
+					case <-o.ctx.Done():
+						return
+					case <-time.After(2 * time.Second):
+					}
 				}
-				select {
-				case <-o.ctx.Done():
-					return
-				case <-time.After(30 * time.Second):
+				log.Printf("[operator] DHT routing table has %d peers, starting advertise", o.node.DHT.RoutingTable().Size())
+				for {
+					if err := o.node.Advertise(o.ctx, ns); err != nil {
+						if !strings.Contains(err.Error(), "failed to find any peer") {
+							log.Printf("[operator] advertise: %v", err)
+						}
+					} else {
+						break
+					}
+					select {
+					case <-o.ctx.Done():
+						return
+					case <-time.After(10 * time.Second):
+					}
 				}
-			}
-		}()
+				log.Printf("[operator] advertise succeeded on %s", ns)
+				for {
+					o.node.Advertise(o.ctx, ns)
+					select {
+					case <-o.ctx.Done():
+						return
+					case <-time.After(30 * time.Second):
+					}
+				}
+			}()
 
 		go o.discoverPeersLoop(ns)
 	}
