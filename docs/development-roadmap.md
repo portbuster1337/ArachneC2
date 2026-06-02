@@ -27,9 +27,9 @@
 ## Phase 3: Interactive Sessions (Weeks 9-10)
 - [x] Direct libp2p stream establishment
 - [x] Interactive shell with PTY support
+- [x] Port forwarding (libp2p stream tunnel)
 - [ ] Reverse SOCKS proxy (implant-side proxy server)
 - [ ] Session multiplexing
-- [~] Port forwarding → planned via IPFS exfiltration (see Phase 4)
 
 ## Phase 4: IPFS Integration (Weeks 11-12)
 - [ ] IPFS data exfiltration (CID-based file transfer)
