@@ -7,7 +7,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/portbuster1337/arachne-c2/implant/core"
+	"github.com/portbuster1337/ArachneC2/implant/core"
 )
 
 func main() {

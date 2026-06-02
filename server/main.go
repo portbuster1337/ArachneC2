@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/portbuster1337/arachne-c2/server/core"
+	"github.com/portbuster1337/ArachneC2/server/core"
 )
 
 func main() {

@@ -18,9 +18,9 @@ import (
 	"github.com/multiformats/go-multiaddr"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/portbuster1337/arachne-c2/pkg/cryptography"
-	"github.com/portbuster1337/arachne-c2/pkg/transport"
-	arachnepb "github.com/portbuster1337/arachne-c2/protobuf/arachnepb"
+	"github.com/portbuster1337/ArachneC2/pkg/cryptography"
+	"github.com/portbuster1337/ArachneC2/pkg/transport"
+	arachnepb "github.com/portbuster1337/ArachneC2/protobuf/arachnepb"
 )
 
 type Agent struct {

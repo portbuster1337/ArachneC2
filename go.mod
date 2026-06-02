@@ -1,4 +1,4 @@
-module github.com/portbuster1337/arachne-c2
+module github.com/portbuster1337/ArachneC2
 
 go 1.22
 

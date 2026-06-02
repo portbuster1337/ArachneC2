@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	commonpb "github.com/portbuster1337/arachne-c2/protobuf/commonpb"
+	commonpb "github.com/portbuster1337/ArachneC2/protobuf/commonpb"
 )
 
 func listProcesses() []*commonpb.Process {

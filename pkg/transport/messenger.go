@@ -11,8 +11,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 
-	arachnepb "github.com/portbuster1337/arachne-c2/protobuf/arachnepb"
-	"github.com/portbuster1337/arachne-c2/pkg/cryptography"
+	arachnepb "github.com/portbuster1337/ArachneC2/protobuf/arachnepb"
+	"github.com/portbuster1337/ArachneC2/pkg/cryptography"
 )
 
 var ErrSignatureInvalid = fmt.Errorf("signature invalid")

@@ -7,7 +7,7 @@
 package arachnepb
 
 import (
-	commonpb "github.com/portbuster1337/arachne-c2/protobuf/commonpb"
+	commonpb "github.com/portbuster1337/ArachneC2/protobuf/commonpb"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"

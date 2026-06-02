@@ -8,8 +8,8 @@ package rpcpb
 
 import (
 	context "context"
-	arachnepb "github.com/portbuster1337/arachne-c2/protobuf/arachnepb"
-	commonpb "github.com/portbuster1337/arachne-c2/protobuf/commonpb"
+	arachnepb "github.com/portbuster1337/ArachneC2/protobuf/arachnepb"
+	commonpb "github.com/portbuster1337/ArachneC2/protobuf/commonpb"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"

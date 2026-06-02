@@ -18,9 +18,9 @@ import (
 	tcp "github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	"google.golang.org/protobuf/proto"
 
-	arachnepb "github.com/portbuster1337/arachne-c2/protobuf/arachnepb"
-	"github.com/portbuster1337/arachne-c2/pkg/cryptography"
-	"github.com/portbuster1337/arachne-c2/pkg/transport"
+	arachnepb "github.com/portbuster1337/ArachneC2/protobuf/arachnepb"
+	"github.com/portbuster1337/ArachneC2/pkg/cryptography"
+	"github.com/portbuster1337/ArachneC2/pkg/transport"
 )
 
 type ImplantRecord struct {

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
-	"github.com/portbuster1337/arachne-c2/pkg/cryptography"
+	"github.com/portbuster1337/ArachneC2/pkg/cryptography"
 )
 
 func Run(relayAddrs []string) error {
