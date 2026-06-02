@@ -1,0 +1,21 @@
+package transport
+
+const (
+	MsgTypeRegister    = uint32(0)
+	MsgTypePing        = uint32(1)
+	MsgTypeTask        = uint32(2)
+	MsgTypeTaskResult  = uint32(3)
+	MsgTypeShell       = uint32(4)
+	MsgTypeDownload    = uint32(5)
+	MsgTypeUpload      = uint32(6)
+	MsgTypeSocks       = uint32(7)
+	MsgTypePortfwd     = uint32(8)
+	MsgTypeScreenshot  = uint32(9)
+	MsgTypeLs          = uint32(10)
+	MsgTypeCd          = uint32(11)
+	MsgTypePwd         = uint32(12)
+	MsgTypeExecute     = uint32(13)
+	MsgTypeKill        = uint32(14)
+	MsgTypePs          = uint32(15)
+	MsgTypeDisconnect  = uint32(255)
+)

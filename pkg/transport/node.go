@@ -10,6 +10,7 @@ import (
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -22,9 +23,12 @@ import (
 
 const (
 	ArachneProtocolID  protocol.ID = "/arachne/1.0.0"
-	CommandTopicPrefix  string     = "arachne/cmd/"
-	BeaconTopicPrefix   string     = "arachne/beacon/"
-	TaskTopicPrefix     string     = "arachne/task/"
+	CommandTopicPrefix  string     = "/arachne/"
+	BeaconTopicPrefix   string     = "/arachne/"
+	TaskTopicPrefix     string     = "/arachne/"
+	CommandsSuffix      string     = "/commands"
+	BeaconsSuffix       string     = "/beacons"
+	TasksSuffix         string     = "/tasks/"
 )
 
 func DefaultBootstrapAddrs() []peer.AddrInfo {
@@ -62,6 +66,7 @@ type NodeConfig struct {
 	EnableDHT      bool
 	RelayAddrs     []string
 	FilterAddrs    func([]multiaddr.Multiaddr) []multiaddr.Multiaddr
+	PrivateKey     crypto.PrivKey
 }
 
 type Node struct {
@@ -83,6 +88,10 @@ func NewNode(ctx context.Context, cfg NodeConfig, opts ...libp2p.Option) (*Node,
 	baseOpts := []libp2p.Option{
 		libp2p.ListenAddrStrings(cfg.ListenAddr),
 		libp2p.NATPortMap(),
+	}
+
+	if cfg.PrivateKey != nil {
+		baseOpts = append(baseOpts, libp2p.Identity(cfg.PrivateKey))
 	}
 
 	if cfg.EnableRelay {

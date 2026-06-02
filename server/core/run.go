@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/portbuster1337/arachne-c2/pkg/cryptography"
 )
 
@@ -14,6 +15,14 @@ func Run(relayAddrs []string) error {
 	keys, err := cryptography.LoadOrGenerateOperatorKey(keyPath())
 	if err != nil {
 		return fmt.Errorf("load operator key: %w", err)
+	}
+
+	pubPath := pubKeyPath()
+	pubBytes, err := crypto.MarshalPublicKey(keys.PublicKey)
+	if err == nil {
+		if err := os.WriteFile(pubPath, pubBytes, 0644); err == nil {
+			log.Printf("[operator] public key exported: %s", pubPath)
+		}
 	}
 
 	log.Printf("[operator] peer ID: %s", keys.PeerID.String())
@@ -41,4 +50,12 @@ func keyPath() string {
 		return filepath.Join(filepath.Dir(exe), "operator.key")
 	}
 	return "operator.key"
+}
+
+func pubKeyPath() string {
+	exe, err := os.Executable()
+	if err == nil {
+		return filepath.Join(filepath.Dir(exe), "operator.pub")
+	}
+	return "operator.pub"
 }
