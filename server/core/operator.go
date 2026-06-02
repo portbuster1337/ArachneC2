@@ -232,7 +232,6 @@ func (o *Operator) handleBeaconRegister(env *arachnepb.Envelope) {
 		existing.Username = reg.Username
 		existing.OS = reg.OS
 		existing.Arch = reg.Arch
-		log.Printf("[operator] beacon update from %s@%s (%s)", reg.Name, reg.Hostname, peerID)
 	} else {
 		o.implants[peerID] = rec
 		log.Printf("[operator] new implant registered: %s@%s [%s/%s] peer=%s",
