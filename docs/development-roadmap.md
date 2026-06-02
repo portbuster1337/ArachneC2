@@ -2,26 +2,27 @@
 
 ## Phase 0: Foundation (Weeks 1-2)
 - [x] Project structure and documentation
-- [ ] Go module initialization (`go mod init`)
-- [ ] libp2p host setup (TCP + WebSocket transports)
-- [ ] Ed25519 key generation and PeerID derivation
-- [ ] GossipSub topic subscription and publishing
-- [ ] Basic Envelope protobuf definition
+- [x] Go module initialization (`go mod init`)
+- [x] libp2p host setup (TCP + WebSocket transports)
+- [x] Ed25519 key generation and PeerID derivation
+- [x] GossipSub topic subscription and publishing
+- [x] Basic Envelope protobuf definition
 
 ## Phase 1: Core Protocol (Weeks 3-4)
-- [ ] Implant registration and beacon model
-- [ ] Operator node: subscribe to beacons, dispatch commands
-- [ ] Envelope signing and verification
-- [ ] Task execution and result delivery
-- [ ] Reconnect / resilience logic
+- [x] Implant registration and beacon model
+- [x] Operator node: subscribe to beacons, dispatch commands
+- [x] Envelope signing and verification
+- [x] Task execution and result delivery
+- [x] Reconnect / resilience logic
 
 ## Phase 2: Implant Capabilities (Weeks 5-8)
-- [ ] File system operations (ls, cd, pwd, download, upload)
-- [ ] Process enumeration (ps)
-- [ ] Command execution (execute, shell)
-- [ ] Screenshot capture
-- [ ] Cross-platform support (Linux, Windows, macOS)
-- [ ] Beacon interval + jitter configuration
+- [x] File system operations (ls, cd, pwd, download, upload)
+- [x] Process enumeration (ps)
+- [x] Command execution (execute)
+- [ ] Interactive shell (shell with PTY)
+- [x] Screenshot capture (stub)
+- [~] Cross-platform support (Linux tested, Windows/macOS pending)
+- [x] Beacon interval + jitter configuration
 
 ## Phase 3: Interactive Sessions (Weeks 9-10)
 - [ ] Direct libp2p stream establishment
@@ -37,11 +38,11 @@
 - [ ] Filecoin storage deals (future)
 
 ## Phase 5: Operator Tooling (Weeks 13-14)
-- [ ] CLI (Cobra) with all commands
-- [ ] TUI console (interactive mode)
+- [x] Implant generation command (build-implant tool)
+- [~] Interactive console (readline-based, pre-Cobra)
 - [ ] gRPC local API for GUI clients
 - [ ] Multi-operator support
-- [ ] Implant generation command
+- [ ] Full CLI (Cobra) with all commands
 
 ## Phase 6: Advanced Features (Weeks 15-16)
 - [ ] Evasion techniques (sandbox detection, AMSI bypass)
