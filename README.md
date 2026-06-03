@@ -15,6 +15,7 @@ fleet and operator are all equal peers in the network — no central point of fa
 
 ## Features
 
+- Self-contained single binary — no source tree needed to generate implants
 - Beacon-mode implants that maintain presence via PubSub topics
 - DHT-based peer discovery — no hardcoded server IPs
 - Encrypted and signed messages (Ed25519 + NaCl box)
@@ -24,6 +25,9 @@ fleet and operator are all equal peers in the network — no central point of fa
 - Cross-platform implants (Linux, macOS, Windows)
 - Protocol Buffers message format with per-message signature verification
 - Built-in hole punching and NAT traversal
+- Automatic Go installation if missing (generates implants anywhere)
+- Cover traffic to mask beacon timing signatures
+- Persistent implant identity (embedded keypair per build)
 
 ## Project Structure
 
@@ -32,7 +36,7 @@ arachne-c2/
 ├── build.sh                # Build script (auto-installs Go if missing)
 ├── bin/                    # Compiled binaries
 ├── cmd/
-│   └── build-implant/      # Tool to embed operator pubkey into implant binary
+│   └── arachne/            # Single entry point (serve + generate)
 ├── docs/                   # Design documentation
 ├── implant/                # Implant agent code
 │   └── core/               # Agent runtime, command handlers, shell, portfwd
@@ -45,31 +49,31 @@ arachne-c2/
 │   ├── commonpb/           # Common types
 │   └── rpcpb/              # RPC service definitions
 └── server/                 # Operator node (the "server")
-    └── core/               # Operator logic, implant tracking, CLI
+    └── core/               # Operator logic, implant tracking, CLI, generate
 ```
 
 ## Build
 
-Requires Go 1.22+. The build script auto-installs Go and UPX if missing:
+The operator binary is self-contained — embed the implant source at build time, then it builds implants anywhere:
 
 ```bash
-./build.sh
+./build.sh       # auto-installs Go + UPX if missing, embeds source, builds bin/arachne
 ```
 
-Or build manually:
+Or manually:
 
 ```bash
-go build -o bin/server ./server/main.go
-go build -o bin/implant ./implant/main.go
-go build -o bin/build-implant ./cmd/build-implant/main.go
+go build -o bin/arachne ./cmd/arachne/
 ```
+
+The built `bin/arachne` can be copied to any machine with Go installed (or no Go — it auto-installs). No source tree needed.
 
 ## Quick Start
 
-### 1. Run the operator (server)
+### 1. Run the operator
 
 ```bash
-./bin/server
+./bin/arachne
 ```
 
 On first run, generates a keypair at `~/.arachne/operator.key` and exports the public
@@ -77,13 +81,15 @@ key to `~/.arachne/operator.pub`.
 
 ### 2. Build an implant
 
-Use the build-implant tool to embed the operator's public key:
+From the operator console (`generate`) or standalone:
 
 ```bash
-./bin/build-implant -pubkey ~/.arachne/operator.pub -output ./myimplant
+./bin/arachne generate --os linux --arch amd64 --output ./myimplant --upx
 ```
 
-This produces a standalone implant binary at `./myimplant`.
+Flags: `--os` (linux, darwin, windows), `--arch` (amd64, arm64), `--output`, `--pubkey`, `--upx` (default true).
+
+Each build generates a unique embedded keypair — the implant keeps the same PeerID across restarts.
 
 ### 3. Deploy and run the implant
 
@@ -109,15 +115,39 @@ arachne (user@hostname) > exec whoami
 
 Available commands: `list`, `select <n>`, `exec <cmd>`, `ls <path>`, `cd <path>`,
 `pwd`, `ps`, `shell`, `portfwd <port> <host:p>`, `download <path>`, `upload <path>`,
-`help`, `exit`.
+`generate [flags]`, `regenerate`, `help [command]`, `exit`.
+
+Use `help <command>` or `<command> --help` for per-command details.
+
+## Available Commands
+
+| Command | Description |
+|---|---|
+| `list` | Show registered implants |
+| `select <idx>` | Select implant by index |
+| `ps` | List processes on selected implant |
+| `ls <path>` | List directory |
+| `cd <path>` | Change directory |
+| `pwd` | Print working directory |
+| `shell` | Interactive shell (direct libp2p stream) |
+| `portfwd <port> <host:p>` | Forward local port through implant |
+| `exec <cmd> [args]` | Execute command (with output) |
+| `download <path>` | Download file from implant |
+| `upload <src> <dst>` | Upload file to implant |
+| `generate [flags]` | Build an implant for any OS/arch (auto-installs Go) |
+| `regenerate` | Regenerate operator keypair (old implants orphaned) |
+| `help [command]` | This help, or details for a specific command |
+| `exit` | Quit |
 
 ## Security
 
 - All messages are signed with Ed25519 keys
 - Implants are built with the operator's public key embedded — they will only accept
   commands from that operator
-- Beacon messages use NaCl box encryption for confidentiality
+- Each implant has a unique embedded keypair (persistent identity across restarts)
+- Cover traffic masks beacon timing against network observers
 - Peer identity is verified on every message via envelope signatures
+- Relay nodes see only encrypted bytes — cannot read or modify traffic
 
 ## License
 

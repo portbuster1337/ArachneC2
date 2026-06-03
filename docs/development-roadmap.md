@@ -38,7 +38,11 @@
 - [ ] Filecoin storage deals (future)
 
 ## Phase 5: Operator Tooling (Weeks 13-14)
-- [x] Implant generation command (build-implant tool)
+- [x] Single binary architecture (cmd/arachne — serves and generates)
+- [x] Self-contained binary (implant source embedded at build time)
+- [x] Implant generation from CLI (generate --os --arch --upx --output)
+- [x] Implant generation from interactive console ('generate' command)
+- [x] Persistent implant identity (embedded keypair per build)
 - [~] Interactive console (readline-based, pre-Cobra)
 - [ ] gRPC local API for GUI clients
 - [ ] Multi-operator support
@@ -52,6 +56,8 @@
 - [ ] COFF/BOF loading (inline execution)
 
 ## Phase 7: Hardening (Ongoing)
+- [x] Cover traffic (random noise to mask beacon timing)
+- [x] Ephemeral implant PeerIDs (new key per session)
 - [ ] End-to-end encryption review
 - [ ] Traffic analysis resistance
 - [ ] Protocol fuzzing

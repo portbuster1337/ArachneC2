@@ -9,6 +9,14 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "generate" {
+		if err := core.RunGenerate(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	var relayAddrs multiFlag
 	flag.Var(&relayAddrs, "relay", "relay multiaddress (optional, auto-discovers via DHT by default)")
 	flag.Parse()

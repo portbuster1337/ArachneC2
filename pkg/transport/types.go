@@ -17,5 +17,6 @@ const (
 	MsgTypeExecute     = uint32(13)
 	MsgTypeKill        = uint32(14)
 	MsgTypePs          = uint32(15)
+	MsgTypeCover       = uint32(127)
 	MsgTypeDisconnect  = uint32(255)
 )

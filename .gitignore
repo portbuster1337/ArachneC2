@@ -11,4 +11,6 @@ build/
 *.out
 .DS_Store
 implant/core/embedded_pubkey.go
-cmd/build-implant/build-implant
+implant/core/embedded_implant_key.go
+server/core/embedsrc/implant_src/
+bin/

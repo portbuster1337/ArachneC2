@@ -1,62 +1,119 @@
 package core
 
 import (
-	"bufio"
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/peterh/liner"
 )
 
+var commandHelp = map[string]string{
+	"list":     "list — show registered implants",
+	"select":   "select <idx> — select implant by index",
+	"ps":       "ps — list processes on selected implant",
+	"ls":       "ls [path] — list directory (default: .)",
+	"cd":       "cd [path] — change directory (default: .)",
+	"pwd":      "pwd — print working directory",
+	"shell":    "shell — interactive shell on selected implant (direct libp2p stream)",
+	"portfwd":  "portfwd <local-port> <target-host:target-port> — forward local port through implant",
+	"exec":     "exec <command> [args...] — execute command on selected implant",
+	"download": "download <remote-path> — download file from implant",
+	"upload":   "upload <local-path> <remote-path> — upload file to implant",
+	"generate":   "generate [flags] — build an implant (all flags optional)\n  --os <string>      target OS: linux, darwin, windows (default: linux)\n  --arch <string>    target arch: amd64, arm64 (default: amd64)\n  --output <path>    output path (default: ./implant)\n  --pubkey <path>    operator public key (default: ~/.arachne/operator.pub)\n  --upx              enable UPX compression (default: true)",
+	"regenerate": "regenerate — regenerate operator keypair (old implants will not call back)",
+	"help":       "help [command] — show this help or help for a specific command",
+	"exit":     "exit — quit the console",
+}
+
+func checkHelp(args []string) bool {
+	for _, a := range args {
+		if a == "--help" || a == "-h" {
+			return true
+		}
+	}
+	return false
+}
+
 func (o *Operator) RunCLI() {
-	reader := bufio.NewReader(os.Stdin)
+	line := liner.NewLiner()
+	defer line.Close()
+
+	line.SetCtrlCAborts(true)
+
+	histPath := filepath.Join(arachneDir(), "history")
+	if f, err := os.Open(histPath); err == nil {
+		line.ReadHistory(f)
+		f.Close()
+	}
+
 	var selected *ImplantRecord
 
 	fmt.Println("Arachne C2 — interactive console")
-	fmt.Println("Commands: list, select <idx>, ps, ls <path>, exec <cmd> [args...], help, exit")
+	fmt.Println("Type 'help' for commands, 'help <command>' for details.")
 	fmt.Println()
 
 	for {
+		prompt := "arachne> "
 		if selected != nil {
-			fmt.Printf("arachne[%s@%s]> ", selected.Name, selected.Hostname)
-		} else {
-			fmt.Printf("arachne> ")
+			prompt = fmt.Sprintf("arachne[%s@%s]> ", selected.Name, selected.Hostname)
 		}
 
-		line, err := reader.ReadString('\n')
+		input, err := line.Prompt(prompt)
 		if err != nil {
-			return
+			if err == liner.ErrPromptAborted {
+				continue
+			}
+			saveHistory(histPath, line)
+			break
 		}
-		line = strings.TrimSpace(line)
-		if line == "" {
+		input = strings.TrimSpace(input)
+		if input == "" {
 			continue
 		}
 
-		parts := strings.Fields(line)
+		line.AppendHistory(input)
+
+		parts := strings.Fields(input)
 		cmd := parts[0]
 		args := parts[1:]
 
 		switch cmd {
 		case "exit", "quit":
+			if f, err := os.Create(histPath); err == nil {
+				line.WriteHistory(f)
+				f.Close()
+			}
 			return
 
 		case "help":
-			fmt.Println("  list                   — show registered implants")
-			fmt.Println("  select <idx>           — select implant by index")
-			fmt.Println("  ps                     — list processes on selected implant")
-			fmt.Println("  ls <path>              — list directory")
-			fmt.Println("  cd <path>              — change directory")
-			fmt.Println("  pwd                    — print working directory")
-			fmt.Println("  shell                  — interactive shell (direct stream)")
-			fmt.Println("  portfwd <port> <host:p> — forward local port through implant")
-			fmt.Println("  exec <cmd> [args]      — execute command (with output)")
-			fmt.Println("  download <path>        — download file from implant")
-			fmt.Println("  upload <src> <dst>     — upload file to implant")
-			fmt.Println("  help                   — this help")
-			fmt.Println("  exit                   — quit")
+			if len(args) > 0 {
+				if h, ok := commandHelp[args[0]]; ok {
+					fmt.Println("  " + h)
+				} else {
+					fmt.Printf("no help for '%s'\n", args[0])
+				}
+				continue
+			}
+			fmt.Println("Commands:")
+			for _, name := range []string{"list", "select", "ps", "ls", "cd", "pwd", "shell", "portfwd", "exec", "download", "upload", "generate", "regenerate", "help", "exit"} {
+				line := commandHelp[name]
+				if i := strings.IndexByte(line, '\n'); i >= 0 {
+					line = line[:i]
+				}
+				fmt.Println("  " + line)
+			}
+			fmt.Println("Use 'help <command>' for details and flags.")
 
 		case "list":
+			if checkHelp(args) {
+				fmt.Println("  " + commandHelp["list"])
+				continue
+			}
 			implants := o.ListImplants()
 			if len(implants) == 0 {
 				fmt.Println("no implants registered")
@@ -69,6 +126,10 @@ func (o *Operator) RunCLI() {
 			}
 
 		case "select":
+			if checkHelp(args) {
+				fmt.Println("  " + commandHelp["select"])
+				continue
+			}
 			if len(args) == 0 {
 				fmt.Println("usage: select <idx>")
 				continue
@@ -87,6 +148,10 @@ func (o *Operator) RunCLI() {
 			fmt.Printf("selected %s@%s (%s)\n", selected.Name, selected.Hostname, selected.PeerID)
 
 		case "ps":
+			if checkHelp(args) {
+				fmt.Println("  " + commandHelp["ps"])
+				continue
+			}
 			if selected == nil {
 				fmt.Println("no implant selected (use 'select <idx>')")
 				continue
@@ -98,6 +163,10 @@ func (o *Operator) RunCLI() {
 			}
 
 		case "ls":
+			if checkHelp(args) {
+				fmt.Println("  " + commandHelp["ls"])
+				continue
+			}
 			if selected == nil {
 				fmt.Println("no implant selected (use 'select <idx>')")
 				continue
@@ -113,6 +182,10 @@ func (o *Operator) RunCLI() {
 			}
 
 		case "cd":
+			if checkHelp(args) {
+				fmt.Println("  " + commandHelp["cd"])
+				continue
+			}
 			if selected == nil {
 				fmt.Println("no implant selected (use 'select <idx>')")
 				continue
@@ -128,6 +201,10 @@ func (o *Operator) RunCLI() {
 			}
 
 		case "pwd":
+			if checkHelp(args) {
+				fmt.Println("  " + commandHelp["pwd"])
+				continue
+			}
 			if selected == nil {
 				fmt.Println("no implant selected (use 'select <idx>')")
 				continue
@@ -139,6 +216,10 @@ func (o *Operator) RunCLI() {
 			}
 
 		case "shell":
+			if checkHelp(args) {
+				fmt.Println("  " + commandHelp["shell"])
+				continue
+			}
 			if selected == nil {
 				fmt.Println("no implant selected (use 'select <idx>')")
 				continue
@@ -149,6 +230,10 @@ func (o *Operator) RunCLI() {
 			}
 
 		case "portfwd":
+			if checkHelp(args) {
+				fmt.Println("  " + commandHelp["portfwd"])
+				continue
+			}
 			if selected == nil {
 				fmt.Println("no implant selected (use 'select <idx>')")
 				continue
@@ -167,6 +252,10 @@ func (o *Operator) RunCLI() {
 			}
 
 		case "download":
+			if checkHelp(args) {
+				fmt.Println("  " + commandHelp["download"])
+				continue
+			}
 			if selected == nil {
 				fmt.Println("no implant selected (use 'select <idx>')")
 				continue
@@ -182,6 +271,10 @@ func (o *Operator) RunCLI() {
 			}
 
 		case "upload":
+			if checkHelp(args) {
+				fmt.Println("  " + commandHelp["upload"])
+				continue
+			}
 			if selected == nil {
 				fmt.Println("no implant selected (use 'select <idx>')")
 				continue
@@ -202,6 +295,10 @@ func (o *Operator) RunCLI() {
 			}
 
 		case "exec", "execute":
+			if checkHelp(args) {
+				fmt.Println("  " + commandHelp["exec"])
+				continue
+			}
 			if selected == nil {
 				fmt.Println("no implant selected (use 'select <idx>')")
 				continue
@@ -216,9 +313,41 @@ func (o *Operator) RunCLI() {
 				fmt.Println("command sent")
 			}
 
+		case "generate":
+			if checkHelp(args) {
+				fmt.Println("  " + commandHelp["generate"])
+				continue
+			}
+			if err := RunGenerate(args); err != nil {
+				fmt.Printf("generate error: %v\n", err)
+			}
+
+		case "regenerate":
+			fmt.Println("WARNING: regenerating operator keys will invalidate ALL existing implants.")
+			fmt.Println("Old implants have your current public key embedded and will NOT be able to call back.")
+			ans, err := line.Prompt("Are you sure? [y/N] ")
+			if err != nil || (ans != "y" && ans != "Y" && ans != "yes") {
+				fmt.Println("cancelled")
+				continue
+			}
+			keyPath := keyPath()
+			pubPath := pubKeyPath()
+			os.Remove(keyPath)
+			os.Remove(pubPath)
+			log.Printf("deleted %s and %s", keyPath, pubPath)
+			log.Printf("regenerated keys will take effect on next startup")
+			fmt.Println("Restart arachne for the new keys to take effect.")
+
 		default:
 			fmt.Printf("unknown command: %s (try 'help')\n", cmd)
 		}
+	}
+}
+
+func saveHistory(path string, line *liner.State) {
+	if f, err := os.Create(path); err == nil {
+		line.WriteHistory(f)
+		f.Close()
 	}
 }
 

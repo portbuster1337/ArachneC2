@@ -170,6 +170,8 @@ func (o *Operator) handleMessage(ctx context.Context, env *arachnepb.Envelope, s
 	switch env.Type {
 	case transport.MsgTypeRegister:
 		o.handleBeaconRegister(env)
+	case transport.MsgTypeCover:
+		// cover traffic silently dropped
 	case transport.MsgTypePs:
 		o.handlePsResult(env)
 	case transport.MsgTypeLs:
