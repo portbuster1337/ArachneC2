@@ -42,6 +42,7 @@ type ImplantRecord struct {
 	Interval    time.Duration
 	Jitter      time.Duration
 	PublicKey   crypto.PubKey
+	Disconnected bool
 }
 
 type Operator struct {
@@ -135,7 +136,36 @@ func (o *Operator) Start() error {
 		return fmt.Errorf("listen beacons: %w", err)
 	}
 
+	go o.disconnectCheckLoop()
+
 	return nil
+}
+
+func (o *Operator) disconnectCheckLoop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			o.mu.Lock()
+			now := time.Now()
+			for id, rec := range o.implants {
+				if rec.Disconnected {
+					continue
+				}
+				timeout := rec.Interval + rec.Jitter + 30*time.Second
+				if now.Sub(rec.LastCheckin) > timeout {
+					rec.Disconnected = true
+					o.implants[id] = rec
+					log.Printf("[operator] implant DISCONNECTED: %s@%s peer=%s (no beacon for %v)",
+						rec.Name, rec.Hostname, id, now.Sub(rec.LastCheckin).Round(time.Second))
+				}
+			}
+			o.mu.Unlock()
+		case <-o.ctx.Done():
+			return
+		}
+	}
 }
 
 func (o *Operator) discoverPeersLoop(ns string) {
@@ -236,6 +266,7 @@ func (o *Operator) handleBeaconRegister(env *arachnepb.Envelope) {
 	o.mu.Lock()
 	if existing, ok := o.implants[peerID]; ok {
 		existing.LastCheckin = time.Now()
+		existing.Disconnected = false
 		existing.Hostname = reg.Hostname
 		existing.Username = reg.Username
 		existing.OS = reg.OS

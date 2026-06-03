@@ -121,8 +121,12 @@ func (o *Operator) RunCLI() {
 			}
 			for i, rec := range implants {
 				ago := time.Since(rec.LastCheckin).Round(time.Second)
-				fmt.Printf("  %d: %s@%s [%s/%s] last=%s peer=%s\n",
-					i, rec.Name, rec.Hostname, rec.OS, rec.Arch, ago, shortenStr(rec.PeerID, 20))
+				status := ""
+				if rec.Disconnected {
+					status = " [DISCONNECTED]"
+				}
+				fmt.Printf("  %d: %s@%s [%s/%s] last=%s peer=%s%s\n",
+					i, rec.Name, rec.Hostname, rec.OS, rec.Arch, ago, shortenStr(rec.PeerID, 20), status)
 			}
 
 		case "select":
