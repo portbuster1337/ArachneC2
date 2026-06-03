@@ -26,6 +26,7 @@ fleet and operator are all equal peers in the network — no central point of fa
 - Protocol Buffers message format with per-message signature verification
 - Built-in hole punching and NAT traversal
 - Automatic Go installation if missing (generates implants anywhere)
+- Garble-based obfuscation (`--obfuscate` — strips names, strings, paths)
 - Cover traffic to mask beacon timing signatures
 - Persistent implant identity (embedded keypair per build)
 
@@ -87,7 +88,9 @@ From the operator console (`generate`) or standalone:
 ./bin/arachne generate --os linux --arch amd64 --output ./myimplant --upx
 ```
 
-Flags: `--os` (linux, darwin, windows), `--arch` (amd64, arm64), `--output`, `--pubkey`, `--upx` (default true).
+Flags: `--os` (linux, darwin, windows), `--arch` (amd64, arm64), `--output`, `--pubkey`, `--upx` (default true), `--obfuscate`.
+
+Use `--obfuscate` to strip function names, package paths, and literal strings via [garble](https://github.com/burrowers/garble) (auto-installed if missing). Combine with `--upx` for maximum hardening.
 
 Each build generates a unique embedded keypair — the implant keeps the same PeerID across restarts.
 
@@ -134,7 +137,7 @@ Use `help <command>` or `<command> --help` for per-command details.
 | `exec <cmd> [args]` | Execute command (with output) |
 | `download <path>` | Download file from implant |
 | `upload <src> <dst>` | Upload file to implant |
-| `generate [flags]` | Build an implant for any OS/arch (auto-installs Go) |
+| `generate [flags]` | Build an implant for any OS/arch (auto-installs Go, garble) |
 | `regenerate` | Regenerate operator keypair (old implants orphaned) |
 | `help [command]` | This help, or details for a specific command |
 | `exit` | Quit |
