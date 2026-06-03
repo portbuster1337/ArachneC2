@@ -58,6 +58,11 @@ func (o *Operator) RunCLI() {
 	fmt.Println()
 
 	for {
+		if selected != nil && selected.Disconnected {
+			fmt.Printf("implant %s@%s disconnected — returning to main prompt\n", selected.Name, selected.Hostname)
+			selected = nil
+		}
+
 		prompt := "arachne> "
 		if selected != nil {
 			prompt = fmt.Sprintf("arachne[%s@%s]> ", selected.Name, selected.Hostname)

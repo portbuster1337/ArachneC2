@@ -490,6 +490,7 @@ func (o *Operator) OpenShell(implantPeerID string) error {
 	}()
 
 	<-errCh
+	fmt.Println() // newline after shell exits
 	return nil
 }
 
