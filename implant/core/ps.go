@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -15,9 +16,40 @@ func listProcesses() []*commonpb.Process {
 	switch runtime.GOOS {
 	case "linux":
 		return listProcessesLinux()
+	case "windows":
+		return listProcessesWindows()
 	default:
 		return listProcessesDummy()
 	}
+}
+
+func listProcessesWindows() []*commonpb.Process {
+	cmd := exec.Command("tasklist", "/FO", "CSV", "/NH")
+	out, err := cmd.Output()
+	if err != nil {
+		return listProcessesDummy()
+	}
+	var procs []*commonpb.Process
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, ",")
+		if len(parts) < 2 {
+			continue
+		}
+		name := strings.Trim(parts[0], `"`)
+		pidStr := strings.Trim(parts[1], `"`)
+		pid, _ := strconv.Atoi(pidStr)
+		owner := ""
+		if len(parts) >= 8 {
+			owner = strings.Trim(parts[7], `"`)
+		}
+		procs = append(procs, &commonpb.Process{Pid: int32(pid), Name: name, Owner: owner})
+	}
+	return procs
 }
 
 func listProcessesLinux() []*commonpb.Process {

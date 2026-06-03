@@ -302,7 +302,7 @@ func (o *Operator) RunCLI() {
 			if err := o.Upload(selected.PeerID, args[1], data); err != nil {
 				fmt.Printf("error: %v\n", err)
 			} else {
-				fmt.Printf("uploaded %d bytes to %s\n", len(data), args[1])
+				fmt.Println("upload command sent")
 			}
 
 		case "exec", "execute":

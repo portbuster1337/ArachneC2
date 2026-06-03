@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"os/user"
 	"runtime"
 	"sync"
 	"time"
@@ -265,10 +266,19 @@ func (a *Agent) sendCoverTraffic() {
 
 func (a *Agent) sendBeaconRegister() {
 	hostname, _ := os.Hostname()
+	username := os.Getenv("USER")
+	if username == "" {
+		username = os.Getenv("USERNAME")
+	}
+	if u, err := user.Current(); err == nil && u.Name != "" {
+		username = u.Name
+	} else if err == nil && u.Username != "" {
+		username = u.Username
+	}
 	reg := &arachnepb.Register{
-		Name:     os.Getenv("USER"),
+		Name:     username,
 		Hostname: hostname,
-		Username: os.Getenv("USER"),
+		Username: username,
 		UID:      fmt.Sprintf("%d", os.Getuid()),
 		GID:      fmt.Sprintf("%d", os.Getgid()),
 		OS:       runtime.GOOS,
