@@ -115,18 +115,18 @@ func (o *Operator) RunCLI() {
 				continue
 			}
 			implants := o.ListImplants()
-			if len(implants) == 0 {
-				fmt.Println("no implants registered")
-				continue
-			}
-			for i, rec := range implants {
-				ago := time.Since(rec.LastCheckin).Round(time.Second)
-				status := ""
+			active := 0
+			for _, rec := range implants {
 				if rec.Disconnected {
-					status = " [DISCONNECTED]"
+					continue
 				}
-				fmt.Printf("  %d: %s@%s [%s/%s] last=%s peer=%s%s\n",
-					i, rec.Name, rec.Hostname, rec.OS, rec.Arch, ago, shortenStr(rec.PeerID, 20), status)
+				ago := time.Since(rec.LastCheckin).Round(time.Second)
+				fmt.Printf("  %d: %s@%s [%s/%s] last=%s peer=%s\n",
+					active, rec.Name, rec.Hostname, rec.OS, rec.Arch, ago, shortenStr(rec.PeerID, 20))
+				active++
+			}
+			if active == 0 {
+				fmt.Println("no connected implants")
 			}
 
 		case "select":
@@ -144,11 +144,18 @@ func (o *Operator) RunCLI() {
 				continue
 			}
 			implants := o.ListImplants()
-			if idx < 0 || idx >= len(implants) {
+			// Filter to only connected implants for indexing
+			var connected []*ImplantRecord
+			for _, rec := range implants {
+				if !rec.Disconnected {
+					connected = append(connected, rec)
+				}
+			}
+			if idx < 0 || idx >= len(connected) {
 				fmt.Println("index out of range")
 				continue
 			}
-			selected = implants[idx]
+			selected = connected[idx]
 			fmt.Printf("selected %s@%s (%s)\n", selected.Name, selected.Hostname, selected.PeerID)
 
 		case "ps":
