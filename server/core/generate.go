@@ -291,16 +291,45 @@ func ensureGo() (string, error) {
 	}
 	tarball.Close()
 
-	log.Print("extracting to /usr/local/go ...")
-	if err := exec.Command("sudo", "rm", "-rf", "/usr/local/go").Run(); err != nil {
-		return "", fmt.Errorf("remove old go: %w", err)
-	}
-	if err := exec.Command("sudo", "tar", "-C", "/usr/local", "-xzf", tarball.Name()).Run(); err != nil {
-		return "", fmt.Errorf("extract go: %w", err)
+	installDir := installGo(tarball.Name())
+
+	log.Printf("Go %s installed at %s", version, installDir)
+	return filepath.Join(installDir, "bin", "go"), nil
+}
+
+func installGo(tarball string) string {
+	extract := func(dst string) error {
+		return exec.Command("tar", "-C", dst, "-xzf", tarball).Run()
 	}
 
-	log.Printf("Go %s installed at /usr/local/go", version)
-	return "/usr/local/go/bin/go", nil
+	// Try direct (running as root or /usr/local writable)
+	os.RemoveAll("/usr/local/go")
+	if extract("/usr/local") == nil {
+		return "/usr/local/go"
+	}
+
+	// Try sudo
+	if exec.Command("sudo", "rm", "-rf", "/usr/local/go").Run() == nil &&
+		exec.Command("sudo", "tar", "-C", "/usr/local", "-xzf", tarball).Run() == nil {
+		return "/usr/local/go"
+	}
+
+	// Fallback: ~/.local/go
+	homeDir, _ := os.UserHomeDir()
+	localGo := filepath.Join(homeDir, ".local", "go")
+	os.RemoveAll(localGo)
+	os.MkdirAll(filepath.Dir(localGo), 0755)
+	if extract(filepath.Dir(localGo)) == nil {
+		// tar creates a go/ dir in the parent
+		if _, err := os.Stat(localGo); err == nil {
+			return localGo
+		}
+	}
+
+	// Last resort: /tmp/go
+	os.RemoveAll("/tmp/go")
+	extract("/tmp")
+	return "/tmp/go"
 }
 
 func ensureGarble() (string, error) {
