@@ -14,3 +14,4 @@ implant/core/embedded_pubkey.go
 implant/core/embedded_implant_key.go
 server/core/embedsrc/implant_src/
 bin/
+release/
