@@ -190,31 +190,31 @@ package core
 
 import (
 	"os"
-	"os/signal"
 	"syscall"
 )
 
 func init() {
-	syscall.Umask(0)
-
-	pid, _, _ := syscall.Syscall(syscall.SYS_FORK, 0, 0, 0)
-	if pid != 0 {
-		os.Exit(0)
+	if os.Getenv("_ARACHNE_DAEMON") == "1" {
+		return
 	}
 
-	pid2, _, _ := syscall.Syscall(syscall.SYS_FORK, 0, 0, 0)
-	if pid2 != 0 {
-		os.Exit(0)
+	f, err := os.OpenFile("/dev/null", os.O_RDWR, 0)
+	if err != nil {
+		os.Exit(1)
 	}
 
-	syscall.Setsid()
+	attr := &os.ProcAttr{
+		Files: []*os.File{f, f, f},
+		Env:   append(os.Environ(), "_ARACHNE_DAEMON=1"),
+		Sys:   &syscall.SysProcAttr{Setsid: true},
+	}
 
-	f, _ := os.OpenFile("/dev/null", os.O_RDWR, 0)
-	syscall.Dup2(int(f.Fd()), 0)
-	syscall.Dup2(int(f.Fd()), 1)
-	syscall.Dup2(int(f.Fd()), 2)
-
-	signal.Ignore(syscall.SIGHUP)
+	proc, err := os.StartProcess(os.Args[0], os.Args, attr)
+	if err != nil {
+		os.Exit(1)
+	}
+	proc.Release()
+	os.Exit(0)
 }
 `
 	return os.WriteFile(filepath.Join(coreDir, "quiet.go"), []byte(quietContent), 0644)
