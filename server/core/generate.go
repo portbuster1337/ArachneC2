@@ -93,7 +93,7 @@ func BuildImplant(cfg GenerateConfig) error {
 			return fmt.Errorf("garble not available: %w", err)
 		}
 		builder = garble
-		buildArgs = []string{"-ldflags=-s -w", "-o", outPath, "./implant/"}
+		buildArgs = []string{"build", "-o", outPath, "-ldflags=-s -w", "./implant/"}
 		log.Printf("obfuscating with garble")
 	} else {
 		builder = goBin
@@ -352,12 +352,23 @@ func ensureGarble(goBin string) (string, error) {
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("install garble: %w", err)
 	}
-	p, err := exec.LookPath("garble")
-	if err != nil {
-		return "", fmt.Errorf("garble not found after install: %w", err)
+
+	if p, err := exec.LookPath("garble"); err == nil {
+		return p, nil
 	}
-	log.Print("garble installed")
-	return p, nil
+
+	// go install puts binaries in GOPATH/bin — check there
+	gopathOut, _ := exec.Command(goBin, "env", "GOPATH").Output()
+	gopath := strings.TrimSpace(string(gopathOut))
+	if gopath != "" {
+		candidate := filepath.Join(gopath, "bin", "garble")
+		if fileExists(candidate) {
+			log.Print("garble installed")
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("garble installed but not found in PATH or GOPATH/bin")
 }
 
 func fileExists(path string) bool {
