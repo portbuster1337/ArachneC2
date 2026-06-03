@@ -31,7 +31,7 @@ Operator Private Key (NEVER leaves operator's machine)
 A libp2p relay forwards encrypted traffic. It sees:
 - `Source PeerID -> Destination PeerID` (who is talking to whom)
 - Encrypted bytes (cannot read contents)
-- PubSub topic names (e.g., `arachne/<peerid>/commands`) — topic IDs are hashes of the operator's public key
+- PubSub topic names (e.g., `/c/<peerid>/cx`) — topic IDs are hashes of the operator's public key
 
 Relays **cannot**:
 - Decrypt message contents

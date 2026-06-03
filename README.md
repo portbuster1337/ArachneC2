@@ -20,13 +20,15 @@ fleet and operator are all equal peers in the network — no central point of fa
 - DHT-based peer discovery — no hardcoded server IPs
 - Encrypted and signed messages (Ed25519 + NaCl box)
 - Interactive operator console (list, select, exec, ls, ps, cd, pwd, download, upload)
-- Interactive shell with PTY over direct libp2p stream (bash/zsh/sh)
+- Interactive shell over direct libp2p stream (PTY on Linux/macOS, hidden ConPTY on Windows)
 - Port forwarding through implant via direct libp2p stream
 - Cross-platform implants (Linux, macOS, Windows)
 - Protocol Buffers message format with per-message signature verification
+- Opaque protocol identifiers (short proto package names, Z-series message types, short wire IDs)
+- Per-implant command topics — commands reach only the intended implant
 - Built-in hole punching and NAT traversal
 - Automatic Go installation if missing (generates implants anywhere)
-- Garble-based obfuscation (`--obfuscate` — strips names, strings, paths)
+- Garble-based obfuscation (`--obfuscate` — strips names, literals, paths)
 - Cover traffic to mask beacon timing signatures
 - Persistent implant identity (embedded keypair per build)
 - Quiet mode (`--quiet` — daemonize on Linux/macOS, hide console on Windows)
@@ -48,9 +50,9 @@ arachne-c2/
 │   ├── cryptography/       # Ed25519 + NaCl key management
 │   └── transport/          # libp2p node, messenger, PubSub helpers
 ├── protobuf/               # Protocol Buffers definitions
-│   ├── arachnepb/          # C2 protocol messages
-│   ├── commonpb/           # Common types
-│   └── rpcpb/              # RPC service definitions
+│   ├── apb/                # C2 protocol messages (opaque type names: Z1, Z2, ...)
+│   ├── cpb/                # Common types (Process, Response, Request)
+│   └── rpb/                # RPC service definitions (service S, methods M0-M13)
 └── server/                 # Operator node (the "server")
     └── core/               # Operator logic, implant tracking, CLI, generate
 ```

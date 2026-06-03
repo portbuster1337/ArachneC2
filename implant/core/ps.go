@@ -9,10 +9,10 @@ import (
 	"strconv"
 	"strings"
 
-	commonpb "github.com/portbuster1337/ArachneC2/protobuf/commonpb"
+	cpb "github.com/portbuster1337/ArachneC2/protobuf/cpb"
 )
 
-func listProcesses() []*commonpb.Process {
+func listProcesses() []*cpb.Process {
 	switch runtime.GOOS {
 	case "linux":
 		return listProcessesLinux()
@@ -23,13 +23,13 @@ func listProcesses() []*commonpb.Process {
 	}
 }
 
-func listProcessesWindows() []*commonpb.Process {
+func listProcessesWindows() []*cpb.Process {
 	cmd := exec.Command("tasklist", "/FO", "CSV", "/NH")
 	out, err := cmd.Output()
 	if err != nil {
 		return listProcessesDummy()
 	}
-	var procs []*commonpb.Process
+	var procs []*cpb.Process
 	lines := strings.Split(string(out), "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -47,18 +47,18 @@ func listProcessesWindows() []*commonpb.Process {
 		if len(parts) >= 8 {
 			owner = strings.Trim(parts[7], `"`)
 		}
-		procs = append(procs, &commonpb.Process{Pid: int32(pid), Name: name, Owner: owner})
+		procs = append(procs, &cpb.Process{Pid: int32(pid), Name: name, Owner: owner})
 	}
 	return procs
 }
 
-func listProcessesLinux() []*commonpb.Process {
+func listProcessesLinux() []*cpb.Process {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return listProcessesDummy()
 	}
 
-	var procs []*commonpb.Process
+	var procs []*cpb.Process
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -68,7 +68,7 @@ func listProcessesLinux() []*commonpb.Process {
 			continue
 		}
 
-		p := &commonpb.Process{Pid: int32(pid)}
+		p := &cpb.Process{Pid: int32(pid)}
 
 		stat, _ := os.ReadFile(filepath.Join("/proc", e.Name(), "stat"))
 		if len(stat) > 0 {
@@ -95,8 +95,8 @@ func listProcessesLinux() []*commonpb.Process {
 	return procs
 }
 
-func listProcessesDummy() []*commonpb.Process {
-	return []*commonpb.Process{
+func listProcessesDummy() []*cpb.Process {
+	return []*cpb.Process{
 		{Pid: 1, Name: "init", Owner: "root"},
 		{Pid: 2, Name: "kthreadd", Owner: "root"},
 	}

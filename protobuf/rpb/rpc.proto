@@ -1,0 +1,50 @@
+syntax = "proto3";
+package rpb;
+option go_package = "github.com/portbuster1337/ArachneC2/protobuf/rpb";
+
+import "cpb/common.proto";
+import "apb/arachne.proto";
+
+service S {
+  rpc M0(cpb.Empty) returns (Version);
+  rpc M1(cpb.Empty) returns (Z27);
+
+  rpc M2(apb.Z4) returns (cpb.Empty);
+  rpc M3(apb.Z12) returns (apb.Z13);
+  rpc M4(apb.Z14) returns (apb.Z15);
+  rpc M5(apb.Z16) returns (apb.Z17);
+  rpc M6(apb.Z20) returns (apb.Z21);
+  rpc M7(apb.Z22) returns (apb.Z23);
+  rpc M8(apb.Z24) returns (apb.Z25);
+  rpc M9(apb.Z2) returns (apb.Z3);
+
+  rpc M10(apb.Z5) returns (apb.Z6);
+  rpc M11(stream apb.Z8) returns (stream apb.Z8);
+  rpc M12(apb.Z9) returns (apb.Z9);
+  rpc M13(stream apb.Z10) returns (stream apb.Z10);
+}
+
+message Version {
+  string Version = 1;
+  string Commit = 2;
+  string GoVersion = 3;
+}
+
+message Z26 {
+  string ID = 1;
+  string Name = 2;
+  string Hostname = 3;
+  string OS = 4;
+  string Arch = 5;
+  string Username = 6;
+  string PeerID = 7;
+  int64 LastCheckin = 8;
+  int64 Interval = 9;
+  bool IsBeacon = 10;
+  string Locale = 11;
+  string RemoteAddress = 12;
+}
+
+message Z27 {
+  repeated Z26 Implants = 1;
+}

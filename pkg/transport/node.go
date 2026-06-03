@@ -22,16 +22,16 @@ import (
 )
 
 const (
-	ArachneProtocolID  protocol.ID = "/arachne/1.0.0"
-	ShellProtocolID    protocol.ID = "/arachne/shell/1.0.0"
-	PortfwdProtocolID  protocol.ID = "/arachne/portfwd/1.0.0"
-	SocksProtocolID    protocol.ID = "/arachne/socks/1.0.0"
-	CommandTopicPrefix  string     = "/arachne/"
-	BeaconTopicPrefix   string     = "/arachne/"
-	TaskTopicPrefix     string     = "/arachne/"
-	CommandsSuffix      string     = "/commands"
-	BeaconsSuffix       string     = "/beacons"
-	TasksSuffix         string     = "/tasks/"
+	ArachneProtocolID  protocol.ID = "/x/1.0.0"
+	ShellProtocolID    protocol.ID = "/x/sh/1.0.0"
+	PortfwdProtocolID  protocol.ID = "/x/pf/1.0.0"
+	SocksProtocolID    protocol.ID = "/x/sk/1.0.0"
+	CommandTopicPrefix  string     = "/c/"
+	BeaconTopicPrefix   string     = "/b/"
+	TaskTopicPrefix     string     = "/t/"
+	CommandsSuffix      string     = "/cx"
+	BeaconsSuffix       string     = "/bx"
+	TasksSuffix         string     = "/tx/"
 )
 
 func DefaultBootstrapAddrs() []peer.AddrInfo {
