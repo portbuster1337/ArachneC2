@@ -26,6 +26,7 @@ type GenerateConfig struct {
 	TargetOS   string
 	TargetArch string
 	UseUPX     bool
+	Obfuscate  bool
 }
 
 func RunGenerate(args []string) error {
@@ -42,6 +43,7 @@ func RunGenerate(args []string) error {
 	fs.StringVar(&cfg.TargetOS, "os", cfg.TargetOS, "target OS (linux, darwin, windows)")
 	fs.StringVar(&cfg.TargetArch, "arch", cfg.TargetArch, "target architecture (amd64, arm64)")
 	fs.BoolVar(&cfg.UseUPX, "upx", true, "compress with UPX")
+	fs.BoolVar(&cfg.Obfuscate, "obfuscate", false, "obfuscate the implant with garble (auto-installs if missing)")
 	fs.Parse(args)
 
 	return BuildImplant(cfg)
@@ -76,16 +78,28 @@ func BuildImplant(cfg GenerateConfig) error {
 		outPath = filepath.Join(wd, outPath)
 	}
 
-	goBinary, err := ensureGo()
+	_, err = ensureGo()
 	if err != nil {
 		return fmt.Errorf("go not available: %w", err)
 	}
 
-	cmd := exec.Command(goBinary, "build",
-		"-o", outPath,
-		"-ldflags=-s -w",
-		"./implant/",
-	)
+	var builder string
+	var buildArgs []string
+	if cfg.Obfuscate {
+		garble, err := ensureGarble()
+		if err != nil {
+			return fmt.Errorf("garble not available: %w", err)
+		}
+		builder = garble
+		buildArgs = []string{"-ldflags=-s -w", "-o", outPath, "./implant/"}
+		log.Printf("obfuscating with garble")
+	} else {
+		goBin := findGo()
+		builder = goBin
+		buildArgs = []string{"build", "-o", outPath, "-ldflags=-s -w", "./implant/"}
+	}
+
+	cmd := exec.Command(builder, buildArgs...)
 	cmd.Env = append(os.Environ(),
 		"GOOS="+cfg.TargetOS,
 		"GOARCH="+cfg.TargetArch,
@@ -205,6 +219,22 @@ func findProjectRoot() (string, error) {
 	}
 }
 
+func findGo() string {
+	if p, err := exec.LookPath("go"); err == nil {
+		return p
+	}
+	if goroot := os.Getenv("GOROOT"); goroot != "" {
+		candidate := filepath.Join(goroot, "bin", "go")
+		if fileExists(candidate) {
+			return candidate
+		}
+	}
+	if fileExists("/usr/local/go/bin/go") {
+		return "/usr/local/go/bin/go"
+	}
+	return "go"
+}
+
 func ensureGo() (string, error) {
 	if p, err := exec.LookPath("go"); err == nil {
 		return p, nil
@@ -271,6 +301,26 @@ func ensureGo() (string, error) {
 
 	log.Printf("Go %s installed at /usr/local/go", version)
 	return "/usr/local/go/bin/go", nil
+}
+
+func ensureGarble() (string, error) {
+	if p, err := exec.LookPath("garble"); err == nil {
+		return p, nil
+	}
+	log.Print("garble not found. Installing via 'go install mvdan.cc/garble@latest'...")
+	goBin := findGo()
+	cmd := exec.Command(goBin, "install", "mvdan.cc/garble@latest")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("install garble: %w", err)
+	}
+	p, err := exec.LookPath("garble")
+	if err != nil {
+		return "", fmt.Errorf("garble not found after install: %w", err)
+	}
+	log.Print("garble installed")
+	return p, nil
 }
 
 func fileExists(path string) bool {
