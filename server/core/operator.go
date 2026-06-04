@@ -14,6 +14,7 @@ import (
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	"google.golang.org/protobuf/proto"
@@ -135,6 +136,7 @@ func (o *Operator) Start() error {
 	if err := o.messenger.ListenBeacons(o.ctx); err != nil {
 		return fmt.Errorf("listen beacons: %w", err)
 	}
+	o.node.SetStreamHandler(transport.BeaconProtocolID, o.handleBeaconStream)
 
 	go o.disconnectCheckLoop()
 
@@ -217,6 +219,34 @@ func (o *Operator) handleMessage(ctx context.Context, env *apb.Envelope, senderP
 	default:
 		log.Printf("[operator] received message type=%d", env.Type)
 	}
+}
+
+func (o *Operator) handleBeaconStream(s network.Stream) {
+	defer s.Close()
+	var msgLen uint32
+	if err := binary.Read(s, binary.LittleEndian, &msgLen); err != nil {
+		log.Printf("[operator] beacon stream read len: %v", err)
+		return
+	}
+	if msgLen > 1<<20 {
+		log.Printf("[operator] beacon stream message too large: %d", msgLen)
+		return
+	}
+	data := make([]byte, msgLen)
+	if _, err := io.ReadFull(s, data); err != nil {
+		log.Printf("[operator] beacon stream read data: %v", err)
+		return
+	}
+	env := &apb.Envelope{}
+	if err := proto.Unmarshal(data, env); err != nil {
+		log.Printf("[operator] beacon stream unmarshal: %v", err)
+		return
+	}
+	var pubKey crypto.PubKey
+	if len(env.SenderKey) > 0 {
+		pubKey, _ = transport.PubKeyFromEnvelope(env)
+	}
+	o.handleMessage(o.ctx, env, pubKey)
 }
 
 func (o *Operator) handleBeaconRegister(env *apb.Envelope) {

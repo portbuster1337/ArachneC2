@@ -26,6 +26,7 @@ const (
 	ShellProtocolID    protocol.ID = "/x/sh/1.0.0"
 	PortfwdProtocolID  protocol.ID = "/x/pf/1.0.0"
 	SocksProtocolID    protocol.ID = "/x/sk/1.0.0"
+	BeaconProtocolID   protocol.ID = "/x/bc/1.0.0"
 	CommandTopicPrefix  string     = "/c/"
 	BeaconTopicPrefix   string     = "/b/"
 	TaskTopicPrefix     string     = "/t/"
