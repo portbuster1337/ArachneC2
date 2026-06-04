@@ -61,7 +61,7 @@ func (a *Agent) handleShellStream(s network.Stream) {
 		log.Printf("[implant] read shell cols: %v", err)
 		return
 	}
-	if rows < 10 || cols < 10 {
+	if rows < 10 || cols < 80 {
 		rows = 30
 		cols = 120
 	}
