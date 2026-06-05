@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 )
 
 func shellPath() string {
@@ -25,6 +26,14 @@ func shellPath() string {
 
 func shellCommand() *exec.Cmd {
 	cmd := exec.Command(shellPath())
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	env := os.Environ()
+	filtered := make([]string, 0, len(env)+1)
+	for _, e := range env {
+		if !strings.HasPrefix(e, "TERM=") {
+			filtered = append(filtered, e)
+		}
+	}
+	filtered = append(filtered, "TERM=xterm-256color")
+	cmd.Env = filtered
 	return cmd
 }

@@ -4,13 +4,33 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/portbuster1337/ArachneC2/implant/core"
 )
 
 func main() {
+	df, _ := os.Create("implant_debug.txt")
+	if df != nil {
+		fmt.Fprintf(df, "=== MAIN ENTERED ===\n")
+		log.SetOutput(io.MultiWriter(os.Stderr, df))
+		defer df.Close()
+		defer func() {
+			fmt.Fprintf(df, "=== MAIN EXITING ===\n")
+			df.Sync()
+		}()
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[implant] FATAL PANIC: %v", r)
+		}
+		log.Printf("[implant] exited")
+	}()
+
 	peerAddr := flag.String("peer", "", "operator multiaddress (e.g. /ip4/1.2.3.4/tcp/35543/p2p/12D3...)")
 	var relayAddrs multiFlag
 	flag.Var(&relayAddrs, "relay", "relay multiaddress (optional, auto-discovers via DHT by default)")
@@ -38,7 +58,15 @@ func main() {
 	}
 
 	log.Printf("[implant] running (Ctrl+C to stop)")
-	select {}
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	select {
+	case <-sigCh:
+		log.Printf("[implant] received signal, shutting down")
+	case <-ctx.Done():
+		log.Printf("[implant] context cancelled, shutting down")
+	}
 }
 
 type multiFlag []string

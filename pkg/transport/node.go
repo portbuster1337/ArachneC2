@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p/core/control"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -26,7 +28,8 @@ const (
 	ShellProtocolID    protocol.ID = "/x/sh/1.0.0"
 	PortfwdProtocolID  protocol.ID = "/x/pf/1.0.0"
 	SocksProtocolID    protocol.ID = "/x/sk/1.0.0"
-	BeaconProtocolID   protocol.ID = "/x/bc/1.0.0"
+	BeaconProtocolID   protocol.ID = "/bc/1.0.0"
+	CmdProtocolID      protocol.ID = "/bc/1.0.0/cmd"
 	CommandTopicPrefix  string     = "/c/"
 	BeaconTopicPrefix   string     = "/b/"
 	TaskTopicPrefix     string     = "/t/"
@@ -91,7 +94,6 @@ func NewNode(ctx context.Context, cfg NodeConfig, opts ...libp2p.Option) (*Node,
 
 	baseOpts := []libp2p.Option{
 		libp2p.ListenAddrStrings(cfg.ListenAddr),
-		libp2p.NATPortMap(),
 	}
 
 	if cfg.PrivateKey != nil {
@@ -106,21 +108,29 @@ func NewNode(ctx context.Context, cfg NodeConfig, opts ...libp2p.Option) (*Node,
 	var err error
 
 	if len(cfg.RelayAddrs) > 0 {
-		var relays []peer.AddrInfo
-		for _, s := range cfg.RelayAddrs {
-			m, err := multiaddr.NewMultiaddr(s)
-			if err != nil {
-				cancel()
-				return nil, fmt.Errorf("parse relay addr %q: %w", s, err)
+		if cfg.EnableDHT {
+			baseOpts = append(baseOpts, libp2p.EnableAutoRelay(
+				autorelay.WithPeerSource(func(ctx context.Context, num int) <-chan peer.AddrInfo {
+					return findRelayCandidates(ctx, num, h)
+				}),
+			))
+		} else {
+			var relays []peer.AddrInfo
+			for _, s := range cfg.RelayAddrs {
+				m, err := multiaddr.NewMultiaddr(s)
+				if err != nil {
+					cancel()
+					return nil, fmt.Errorf("parse relay addr %q: %w", s, err)
+				}
+				pi, err := peer.AddrInfoFromP2pAddr(m)
+				if err != nil {
+					cancel()
+					return nil, fmt.Errorf("parse relay peer info %q: %w", s, err)
+				}
+				relays = append(relays, *pi)
 			}
-			pi, err := peer.AddrInfoFromP2pAddr(m)
-			if err != nil {
-				cancel()
-				return nil, fmt.Errorf("parse relay peer info %q: %w", s, err)
-			}
-			relays = append(relays, *pi)
+			baseOpts = append(baseOpts, libp2p.EnableAutoRelayWithStaticRelays(relays))
 		}
-		baseOpts = append(baseOpts, libp2p.EnableAutoRelayWithStaticRelays(relays))
 	} else if cfg.EnableDHT {
 		baseOpts = append(baseOpts, libp2p.EnableAutoRelay(
 			autorelay.WithPeerSource(func(ctx context.Context, num int) <-chan peer.AddrInfo {
@@ -139,6 +149,10 @@ func NewNode(ctx context.Context, cfg NodeConfig, opts ...libp2p.Option) (*Node,
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("create libp2p host: %w", err)
+	}
+
+	if len(cfg.RelayAddrs) > 0 && cfg.EnableDHT {
+		go tryStaticRelayConnections(ctx, h, cfg.RelayAddrs)
 	}
 
 	ps, err := pubsub.NewGossipSub(ctx, h)
@@ -172,6 +186,9 @@ func NewNode(ctx context.Context, cfg NodeConfig, opts ...libp2p.Option) (*Node,
 
 func (n *Node) StartDiscovery() error {
 	go func() {
+		defer func() {
+			recover()
+		}()
 		for _, pi := range n.config.BootstrapPeers {
 			connectCtx, cancel := context.WithTimeout(n.ctx, 5*time.Second)
 			if err := n.Host.Connect(connectCtx, pi); err != nil {
@@ -183,7 +200,12 @@ func (n *Node) StartDiscovery() error {
 	}()
 
 	if n.DHT != nil {
-		go n.DHT.Bootstrap(n.ctx)
+		go func() {
+			defer func() {
+				recover()
+			}()
+			n.DHT.Bootstrap(n.ctx)
+		}()
 	}
 
 	if n.config.EnableMDNS {
@@ -204,7 +226,9 @@ func (m *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	if pi.ID == m.h.ID() {
 		return
 	}
-	m.h.Peerstore().AddAddr(pi.ID, pi.Addrs[0], time.Hour)
+	for _, addr := range pi.Addrs {
+		m.h.Peerstore().AddAddr(pi.ID, addr, time.Hour)
+	}
 }
 
 func (n *Node) Advertise(ctx context.Context, ns string) error {
@@ -311,6 +335,9 @@ func (n *Node) AddrsWithID() []multiaddr.Multiaddr {
 func findRelayCandidates(ctx context.Context, num int, h host.Host) <-chan peer.AddrInfo {
 	ch := make(chan peer.AddrInfo, num)
 	go func() {
+		defer func() {
+			recover()
+		}()
 		defer close(ch)
 		if h == nil {
 			return
@@ -339,4 +366,58 @@ func findRelayCandidates(ctx context.Context, num int, h host.Host) <-chan peer.
 		}
 	}()
 	return ch
+}
+
+func tryStaticRelayConnections(ctx context.Context, h host.Host, relayAddrs []string) {
+	for _, s := range relayAddrs {
+		m, err := multiaddr.NewMultiaddr(s)
+		if err != nil {
+			log.Printf("[node] parse relay addr %q: %v", s, err)
+			continue
+		}
+		pi, err := peer.AddrInfoFromP2pAddr(m)
+		if err != nil {
+			log.Printf("[node] parse relay peer %q: %v", s, err)
+			continue
+		}
+		connCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err = h.Connect(connCtx, *pi)
+		cancel()
+		if err != nil {
+			log.Printf("[node] relay %s unreachable: %v", pi.ID.String(), err)
+			continue
+		}
+		log.Printf("[node] connected to relay %s", pi.ID.String())
+	}
+}
+
+type Port443Gater struct{}
+
+func (g *Port443Gater) InterceptPeerDial(p peer.ID) (allow bool) { return true }
+func (g *Port443Gater) InterceptAccept(c network.ConnMultiaddrs) (allow bool) { return true }
+func (g *Port443Gater) InterceptSecured(d network.Direction, p peer.ID, c network.ConnMultiaddrs) (allow bool) { return true }
+func (g *Port443Gater) InterceptUpgraded(c network.Conn) (bool, control.DisconnectReason) { return true, 0 }
+func (g *Port443Gater) InterceptAddrDial(id peer.ID, addr multiaddr.Multiaddr) (allow bool) {
+	port, err := addr.ValueForProtocol(multiaddr.P_TCP)
+	if err != nil {
+		return false
+	}
+	return port == "443"
+}
+
+func FilterPort443Addrs(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
+	var out []multiaddr.Multiaddr
+	for _, a := range addrs {
+		port, err := a.ValueForProtocol(multiaddr.P_TCP)
+		if err != nil {
+			continue
+		}
+		if port == "443" {
+			out = append(out, a)
+		}
+	}
+	if len(out) == 0 {
+		return addrs
+	}
+	return out
 }

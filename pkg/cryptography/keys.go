@@ -1,7 +1,6 @@
 package cryptography
 
 import (
-	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -85,27 +84,11 @@ func PeerIDFromBytes(data []byte) (peer.ID, error) {
 }
 
 func Sign(priv crypto.PrivKey, data []byte) ([]byte, error) {
-	ed25519Key, ok := priv.(*crypto.Ed25519PrivateKey)
-	if !ok {
-		raw, err := priv.Raw()
-		if err != nil {
-			return nil, fmt.Errorf("get raw private key: %w", err)
-		}
-		return ed25519.Sign(ed25519.NewKeyFromSeed(raw), data), nil
-	}
-	raw, err := ed25519Key.Raw()
-	if err != nil {
-		return nil, fmt.Errorf("get raw ed25519 key: %w", err)
-	}
-	return ed25519.Sign(ed25519.NewKeyFromSeed(raw), data), nil
+	return priv.Sign(data)
 }
 
 func Verify(pub crypto.PubKey, data []byte, sig []byte) (bool, error) {
-	raw, err := pub.Raw()
-	if err != nil {
-		return false, fmt.Errorf("get raw public key: %w", err)
-	}
-	return ed25519.Verify(raw, data, sig), nil
+	return pub.Verify(data, sig)
 }
 
 func NewEpochNow() int64 {

