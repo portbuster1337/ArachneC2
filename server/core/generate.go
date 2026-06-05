@@ -139,7 +139,7 @@ func BuildImplant(cfg GenerateConfig) error {
 
 	if cfg.UseUPX {
 		if upxPath, err := exec.LookPath("upx"); err == nil {
-			upx := exec.Command(upxPath, "--best", "--lzma", "--all-methods", outPath)
+			upx := exec.Command(upxPath, "--lzma", "--compress-exports=0", outPath)
 			upx.Stdout = os.Stdout
 			upx.Stderr = os.Stderr
 			if err := upx.Run(); err != nil {
