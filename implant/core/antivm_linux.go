@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 func init() {
@@ -513,7 +514,7 @@ func bluestacksFolders() bool {
 }
 
 func kmsgCheck() bool {
-	f, err := os.OpenFile("/dev/kmsg", os.O_RDONLY|os.O_NONBLOCK, 0)
+	f, err := os.OpenFile("/dev/kmsg", syscall.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return false
 	}
