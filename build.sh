@@ -64,6 +64,7 @@ GOEOF
 find "$EMBED_DIR/implant_src" -name "*.proto" -type f -delete
 find "$EMBED_DIR/implant_src" -name "*_test.go" -type f -delete
 
+
 # Compress the source tree (Go source code compresses extremely well)
 echo "Compressing embedded source tree..."
 tar -czf "$EMBED_DIR/implant_src.tar.gz" -C "$EMBED_DIR/implant_src" "."

@@ -35,6 +35,7 @@ fleet and operator are all equal peers in the network — no central point of fa
 - Automatic implant disconnect detection and alerting
 - Stream keepalive prevents relay circuit idle timeout
 - WebSocket + TCP transport (UDP/multicast-free for sandbox compatibility)
+- VM detection (`--antivm` — 65+ detection techniques with VMAware-compatible scoring, no CGO required)
 
 ## Project Structure
 
@@ -88,9 +89,11 @@ From the operator console (`generate`) or standalone:
 ./bin/arachne generate --os linux --arch amd64 --output ./myimplant --upx
 ```
 
-Flags: `--os` (linux, darwin, windows), `--arch` (amd64, arm64), `--output`, `--pubkey`, `--upx` (default true), `--obfuscate`, `--quiet`.
+Flags: `--os` (linux, darwin, windows), `--arch` (amd64, arm64), `--output`, `--pubkey`, `--upx` (default true), `--obfuscate`, `--quiet`, `--antivm`.
 
 Use `--obfuscate` to strip function names, package paths, and literal strings via [garble](https://github.com/burrowers/garble) (auto-installed if missing). Combine with `--upx` for maximum hardening.
+
+Use `--antivm` to compile in VM detection. The implant runs 65+ detection techniques (CPUID signatures, MAC prefixes, DMI/SMBIOS, PCI vendor IDs, process enumeration, registry keys, container detection) with a [VMAware](https://github.com/kernelwernel/VMAware)-compatible accumulated scoring system. Exits cleanly if the score exceeds 50%. Pure Go — no CGO, no cross-compilers needed.
 
 Each build generates a unique embedded keypair — the implant keeps the same PeerID across restarts.
 
@@ -140,7 +143,7 @@ Use `help <command>` or `<command> --help` for per-command details.
 | `exec <cmd> [args]` | Execute command (with output) |
 | `download <path>` | Download file from implant |
 | `upload <src> <dst>` | Upload file to implant |
-| `generate [flags]` | Build an implant for any OS/arch (auto-installs Go, garble). Flags: `--os`, `--arch`, `--output`, `--pubkey`, `--upx`, `--obfuscate`, `--quiet` |
+| `generate [flags]` | Build an implant for any OS/arch (auto-installs Go, garble). Flags: `--os`, `--arch`, `--output`, `--pubkey`, `--upx`, `--obfuscate`, `--quiet`, `--antivm` |
 | `regenerate` | Regenerate operator keypair (old implants orphaned) |
 | `help [command]` | This help, or details for a specific command |
 | `exit` | Quit |

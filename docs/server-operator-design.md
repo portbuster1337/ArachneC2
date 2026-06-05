@@ -96,6 +96,7 @@ server/
 - Cross-compilation for Windows/Linux/macOS
 - Support for staged payloads (small stager downloads full implant)
 - Signature spoofing and evasion options
+- VM detection (`--antivm`): 65+ techniques with VMAware-compatible accumulated scoring, pure Go (no CGO needed)
 
 ### 5. Loot / Data Retrieval
 - Receive CIDs from implants via beacon messages

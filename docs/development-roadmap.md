@@ -49,7 +49,7 @@
 - [ ] Full CLI (Cobra) with all commands
 
 ## Phase 6: Advanced Features (Weeks 15-16)
-- [ ] Evasion techniques (sandbox detection, AMSI bypass)
+- [x] Evasion techniques (sandbox detection via `--antivm`, AMSI bypass)
 - [ ] Process injection and migration
 - [ ] Windows token manipulation
 - [ ] Pivot through compromised implants

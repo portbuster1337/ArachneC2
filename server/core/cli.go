@@ -24,7 +24,7 @@ var commandHelp = map[string]string{
 	"exec":     "exec <command> [args...] — execute command on selected implant",
 	"download": "download <remote-path> — download file from implant",
 	"upload":   "upload <local-path> <remote-path> — upload file to implant",
-	"generate":   "generate [flags] — build an implant (all flags optional)\n  --os <string>      target OS: linux, darwin, windows (default: linux)\n  --arch <string>    target arch: amd64, arm64 (default: amd64)\n  --output <path>    output path (default: ./implant)\n  --pubkey <path>    operator public key (default: ~/.arachne/operator.pub)\n  --upx              enable UPX compression (default: true)\n  --obfuscate        obfuscate the binary with garble (auto-installs if missing)\n  --quiet            suppress output, detach from terminal, hide console on Windows",
+	"generate":   "generate [flags] — build an implant (all flags optional)\n  --os <string>      target OS: linux, darwin, windows (default: linux)\n  --arch <string>    target arch: amd64, arm64 (default: amd64)\n  --output <path>    output path (default: ./implant)\n  --pubkey <path>    operator public key (default: ~/.arachne/operator.pub)\n  --upx              enable UPX compression (default: true)\n  --obfuscate        obfuscate the binary with garble (auto-installs if missing)\n  --quiet            suppress output, detach from terminal, hide console on Windows\n  --antivm           enable VM detection (pure Go, 65+ techniques, VMAware scoring)",
 	"regenerate": "regenerate — regenerate operator keypair (old implants will not call back)",
 	"help":       "help [command] — show this help or help for a specific command",
 	"exit":     "exit — quit the console",

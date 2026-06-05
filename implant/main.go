@@ -28,6 +28,8 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	core.DetectVM()
+
 	cfg := core.DefaultAgentConfig()
 	if *peerAddr != "" {
 		cfg.OperatorAddr = *peerAddr
