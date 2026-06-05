@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -14,16 +13,6 @@ import (
 )
 
 func main() {
-	df, _ := os.Create("implant_debug.txt")
-	if df != nil {
-		fmt.Fprintf(df, "=== MAIN ENTERED ===\n")
-		log.SetOutput(io.MultiWriter(os.Stderr, df))
-		defer df.Close()
-		defer func() {
-			fmt.Fprintf(df, "=== MAIN EXITING ===\n")
-			df.Sync()
-		}()
-	}
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[implant] FATAL PANIC: %v", r)

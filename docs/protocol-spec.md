@@ -17,21 +17,18 @@ On first execution, the implant generates:
 - `implant.ed25519` - ephemeral keypair
 - Registration envelope signed by operator key (embedded at build time)
 
-## 2. Topic Structure
+## 2. Topic Structure (PubSub Fallback)
 
-All topics use GossipSub via libp2p PubSub. Topic IDs use short opaque prefixes to reduce wire fingerprinting.
+Topics are used as a fallback when direct streams are unavailable. Topic IDs use short opaque prefixes to reduce wire fingerprinting.
 
 ```
-/c/<operator-peerid>/cx    # Commands — operator -> implants (broadcast)
-/b/<operator-peerid>/bx    # Beacons — implants -> operator (heartbeat & results)
-/b/<operator-peerid>/tx/<implant-peerid>  # Per-implant task topic (direct routing)
+/b/<operator-peerid>/bx    # Beacons — implants -> operator (pubsub fallback)
 ```
+
+Primary communication uses direct libp2p streams (see section 4).
 
 ### Topic Authorization
-- `commands` topic: messages validated against operator's public key
 - `beacons` topic: messages validated against implant's public key
-- `tasks/<id>` topic: messages validated against operator's public key
-- Implants drop messages not signed by the operator
 - Operator drops messages not signed by known implants on `beacons`
 
 ## 3. Envelope Format
@@ -63,30 +60,41 @@ message Z1 {
 
 Direct libp2p streams use short protocol IDs:
 
-| Protocol | ID |
-|---|---|
-| Shell | `/x/sh/1.0.0` |
-| Port forward | `/x/pf/1.0.0` |
-| SOCKS | `/x/sk/1.0.0` |
+| Protocol | ID | Purpose |
+|---|---|---|
+| Beacon | `/bc/1.0.0` | Persistent beacon stream (implant → operator) |
+| Command | `/bc/1.0.0/cmd` | Command delivery (operator → implant) |
+| Shell | `/x/sh/1.0.0` | Interactive shell (Ctrl+] to exit) |
+| Port forward | `/x/pf/1.0.0` | TCP port forwarding |
+| SOCKS | `/x/sk/1.0.0` | SOCKS proxy tunnel |
 
 ## 4. Session Types
 
-### 4.1 Beacon Mode (Async)
-1. Implant subscribes to `commands` topic and its per-implant `tasks/<id>` topic
-2. Implant publishes `Z1` (beacon register) on `beacons` topic
-3. Operator reads beacon, publishes tasks on `tasks/<id>` topic
-4. Implant executes tasks, publishes results on `beacons`
-5. Implant sleeps for `Interval + random(0, Jitter)`
+### 4.1 Beacon Mode (Persistent Stream)
+1. Implant opens persistent `/bc/1.0.0` stream to operator (relay-aware, `AllowLimitedConn`)
+2. Implant sends signed `Z1` (beacon register) on the stream every 10-15s
+3. A separate goroutine writes `MsgTypeCover` envelopes every 5s to prevent relay idle timeout
+4. Operator reads messages in a loop, updates `LastCheckin`, dispatches by type
+5. Results (`MsgTypeLs`, `MsgTypePs`, etc.) are sent on the same persistent stream
+6. If the stream dies, implant reconnects via DHT discovery + `openBeaconStream`
 
-### 4.2 Interactive Session Mode (Stream)
+### 4.2 Command Delivery (Direct Stream)
+1. Operator opens a `/bc/1.0.0/cmd` stream to implant (relay-aware, `AllowLimitedConn`)
+2. Operator signs the envelope and writes it length-prefixed
+3. Implant reads, verifies signature against embedded operator pubkey, dispatches
+4. Implant processes the command and sends the result on the persistent beacon stream
+
+### 4.3 Interactive Session Mode (Stream)
 1. Operator initiates direct libp2p stream to implant
 2. Bidirectional encrypted stream for shell/portfwd/socks
 3. Uses libp2p stream multiplexing
+4. In shell, type `exit` or press **Ctrl+]** to return to the operator prompt
 
 ## 5. Message Types
 
 | Type | ID | Direction | Description |
 |---|---|---|---|
+| COVER | 127 | Implant -> Op | Cover traffic (silently dropped by operator) |
 | REGISTER | 0 | Implant -> Op | Initial beacon/registration |
 | PING | 1 | Bidirectional | Keepalive |
 | TASK | 2 | Op -> Implant | Execute command |
@@ -99,7 +107,9 @@ Direct libp2p streams use short protocol IDs:
 | SCREENSHOT | 9 | Implant -> Op | Screen capture |
 | LS | 10 | Op -> Implant | List directory |
 | CD | 11 | Op -> Implant | Change directory |
-| EXECUTE | 12 | Op -> Implant | Run command |
+| PWD | 12 | Op -> Implant | Print working directory |
+| EXECUTE | 13 | Op -> Implant | Run command |
+| KILL | 14 | Op -> Implant | Self-terminate |
 | DISCONNECT | 255 | Bidirectional | Clean close |
 
 ## 6. Data Exfiltration via IPFS

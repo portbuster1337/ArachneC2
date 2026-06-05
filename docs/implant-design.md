@@ -48,37 +48,41 @@ implant/
    - TCP + WebSocket transports
    - AutoNAT + relay client for NAT traversal
    - GossipSub pubsub
-4. Subscribe to `/c/<op>/cx` (commands topic) and its per-implant task topic `/b/<op>/tx/<implant-peerid>`
-5. Publish `Z1` (beacon register) to `/b/<op>/bx` (beacons topic)
-6. Enter main loop
+4. Start DHT discovery to find operator via rendezvous namespace
+5. On DHT connect, open persistent `/bc/1.0.0` stream to operator (relay-aware)
+6. Send `Z1` (beacon register) on the persistent stream
+7. Start beacon loop (sends `Z1` every 10-15s) and keepalive loop (writes cover traffic every 5s)
+8. Start command stream handler (`/bc/1.0.0/cmd`) for incoming commands
 
-### Main Loop (Beacon Mode)
+### Main Loop (Persistent Beacon Stream)
 ```
 loop:
-  Listen on command topic (with timeout = interval)
-  If command received:
-    Validate signature against operator key
-    Dispatch to handler
-    Publish result to beacons topic
+  Send Z1 (beacon register) on persistent /bc/1.0.0 stream
   Sleep(interval + random(jitter))
+
+parallel goroutines:
+  keepalive:  write MsgTypeCover every 5s on persistent stream
+  commands:   read /bc/1.0.0/cmd streams, verify, dispatch to handler
+              results sent on persistent beacon stream
+  DHT:        find operator every 15s, reconnect if beacon stream is nil
 ```
 
 ### Session Mode
 ```
 on "open-session" command:
-  Open direct libp2p stream to operator
+  Open direct libp2p stream to operator (/x/sh/1.0.0 or /x/pf/1.0.0)
   Upgrade to encrypted bidirectional channel
-  Handle interactive commands (shell, socks, etc.)
-  On disconnect: return to beacon mode
+  Handle interactive commands (shell, portfwd, etc.)
+  On disconnect or Ctrl+]: return to main loop
 ```
 
 ## Transport Configuration
 
-The implant tries transports in order:
-1. TCP (direct connection to relay/bootstrap peers)
-2. WebSocket (for restrictive networks, port 443)
-3. WebRTC (via libp2p, for browser-based implants)
-4. Circuit relay (via libp2p relay peers)
+The implant uses TCP and WebSocket transports (no UDP/QUIC for sandbox compatibility). Relay circuits use `AllowLimitedConn` to traverse NAT.
+
+1. TCP — direct connection to relay/bootstrap peers
+2. WebSocket — for restrictive networks, port 443
+3. Circuit relay — via libp2p relay peers (`AllowLimitedConn`)
 
 ### Bootstrap Peers
 - Compiled-in list of known public libp2p peers

@@ -75,21 +75,21 @@ server/
 ## Key Responsibilities
 
 ### 1. Implant Discovery & Management
-- Listen on `/b/<op>/bx` (beacons topic)
-- Accept `Z1` (beacon register) messages and validate signatures
-- Maintain in-memory and SQLite-backed implant registry
-- Track implant state: online/offline/last-checkin
+- Handle incoming persistent `/bc/1.0.0` beacon streams from implants
+- Accept `Z1` (beacon register) messages, validate signatures, match sender peer ID
+- Maintain in-memory implant registry with `LastCheckin` tracking
+- Detect disconnect via stream reset + heartbeat timeout
 
 ### 2. Command Dispatch
-- Subscribe to beacons to detect active implants
 - Accept operator commands from CLI
-- Publish tasks on `/b/<op>/tx/<implant-id>` (per-implant task topic)
-- Await results on beacon topic or via stream
+- Open direct `/bc/1.0.0/cmd` stream to implant (relay-aware, `AllowLimitedConn`)
+- Sign envelope and write length-prefixed to stream
+- Await results on the persistent beacon stream
 
 ### 3. Interactive Sessions
-- Open direct libp2p stream to implant (via DHT lookup or relay)
-- Bidirectional shell, port forwarding, SOCKS proxy
-- Stream multiplexing for concurrent channels
+- Open direct libp2p stream to implant (relay-aware, `AllowLimitedConn`)
+- Bidirectional shell, port forwarding
+- Shell: type `exit` or press **Ctrl+]** to return to operator prompt
 
 ### 4. Implant Generation
 - Compile implant binaries with operator's public key embedded

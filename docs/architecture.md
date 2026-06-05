@@ -13,30 +13,30 @@ communications, and command relay** — all without any central server, static I
 
 | Feature | Sliver | Arachne |
 |---|---|---|
-| Transport | mTLS, HTTP(S), DNS, WireGuard | libp2p (TCP, WebSocket, QUIC) |
+| Transport | mTLS, HTTP(S), DNS, WireGuard | libp2p (TCP, WebSocket) |
 | Server identity | Static IP / domain | PeerID (cryptographic) |
 | Discovery | Hardcoded C2 endpoints | DHT + PubSub topic discovery |
 | Resilience | Multiple listeners | Any peer can relay |
 | Takedown | Block IP/domain | Unbounded: must Sybil the DHT |
 | NAT traversal | Manual / WireGuard | AutoNAT + relay + hole-punching |
 | Encryption | Per-binary asymmetric keys | libp2p noise/TLS + protobuf envelopes |
-| Implant comms | Polling / long-poll / DNS ticks | PubSub streaming + direct streams |
+| Implant comms | Polling / long-poll / DNS ticks | Direct streams + persistent beacon stream |
 
 ## High-Level Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     libp2p Network (DHT + GossipSub)        │
+│                     libp2p Network (DHT + Relay)             │
 │                                                             │
-│   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐ │
-│   │ Operator │   │ Implant  │   │ Implant  │   │ Relay    │ │
-│   │ (Client) │   │ (Agent)  │   │ (Agent)  │   │ Node     │ │
-│   └────┬─────┘   └────┬─────┘   └────┬─────┘   └────┬─────┘ │
-│        │              │              │              │        │
-│        └──────────────┴──────────────┴──────────────┘        │
-│                         All subscribe to                     │
-│                  "/c/<op-id>/cx"                              │
-│                  "/b/<op-id>/bx"                              │
+│   ┌──────────┐              ┌──────────┐   ┌──────────┐     │
+│   │ Operator │  persistent  │ Implant  │   │ Implant  │     │
+│   │ (Client) │←──beacon─────│ (Agent)  │   │ (Agent)  │     │
+│   │          │──command────→│          │   │          │     │
+│   │          │  direct str  │          │   │          │     │
+│   └────┬─────┘              └────┬─────┘   └────┬─────┘     │
+│        │                         │              │            │
+│        └─────────────────────────┴──────────────┘            │
+│                    DHT discovery + relay circuits             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -44,15 +44,16 @@ communications, and command relay** — all without any central server, static I
 
 ### 1. Operator Node (Client)
 - Connects to libp2p network with a **PeerID** derived from an operator key
-- Subscribes to `/b/<op-id>/bx` topic for implant check-ins
-- Publishes commands on `/c/<op-id>/cx` and per-implant task topics `/b/<op-id>/tx/<implant-id>`
+- Handles persistent beacon streams from implants (`/bc/1.0.0`)
+- Sends commands to implants over direct libp2p streams (`/bc/1.0.0/cmd`)
 - Opens direct libp2p streams for interactive sessions (shell, socks, portfwd)
 
 ### 2. Implant Node (Agent)
 - Compiled with an **operator's public key** (embedded at build time)
 - Connects to IPFS/libp2p bootstrap peers or uses embedded peer list
-- Subscribes to command topic, publishes heartbeat to beacon topic
-- Supports beacon mode (async polling via PubSub) and session mode (direct stream)
+- Opens persistent beacon stream to operator (`/bc/1.0.0`) with 5s keepalive
+- Receives commands on direct streams (`/bc/1.0.0/cmd`) and via pubsub fallback
+- Supports session mode (direct stream for shell, portfwd) over relay circuits
 
 ### 3. Relay Nodes
 - Any libp2p peer can act as a relay (no cost, no registration)
@@ -67,14 +68,14 @@ communications, and command relay** — all without any central server, static I
 ## Communication Model
 
 | Message Type | Transport | Pattern |
-|---|---|---|
-| Beacon / Heartbeat | GossipSub topic | Implant -> PubSub -> Operator |
-| Command dispatch | GossipSub topic | Operator -> PubSub -> Implant |
-| Task result | GossipSub topic | Implant -> PubSub -> Operator |
-| Interactive shell | Direct libp2p stream | Bidirectional stream |
+|---|---|---|---|
+| Beacon / Heartbeat | Persistent direct stream (`/bc/1.0.0`) | Implant → Operator |
+| Command dispatch | Direct stream (`/bc/1.0.0/cmd`) | Operator → Implant |
+| Task result | Beacon stream or pubsub fallback | Implant → Operator |
+| Interactive shell | Direct libp2p stream (`/x/sh/1.0.0`) | Bidirectional (Ctrl+] to exit) |
 | File download | Direct stream or IPFS | Stream or IPFS block fetch |
-| SOCKS / Portfwd | Direct stream | Proxied through libp2p |
-| Pivot | Nested libp2p stream | Implant -> Implant -> Operator |
+| SOCKS / Portfwd | Direct stream (`/x/pf/1.0.0`) | Proxied through libp2p |
+| Pivot | Nested libp2p stream | Implant → Implant → Operator |
 
 ## Security Model
 
