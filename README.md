@@ -33,6 +33,8 @@ fleet and operator are all equal peers in the network — no central point of fa
 - Persistent implant identity (embedded keypair per build)
 - Quiet mode (`--quiet` — daemonize on Linux/macOS, hide console on Windows)
 - Automatic implant disconnect detection and alerting
+- Stream keepalive prevents relay circuit idle timeout
+- WebSocket + TCP transport (UDP/multicast-free for sandbox compatibility)
 
 ## Project Structure
 
@@ -62,16 +64,10 @@ arachne-c2/
 The operator binary is self-contained — embed the implant source at build time, then it builds implants anywhere:
 
 ```bash
-./build.sh       # auto-installs Go + UPX if missing, embeds source, builds bin/arachne
+./build.sh       # auto-installs Go if missing, embeds source, cross-compiles for all platforms
 ```
 
-Or manually:
-
-```bash
-go build -o bin/arachne ./cmd/arachne/
-```
-
-The built `bin/arachne` can be copied to any machine with Go installed (or no Go — it auto-installs). No source tree needed.
+Binaries are written to `bin/` as `arachne-{os}-{arch}` (or `*.exe` for Windows). The built binary can be copied to any machine with Go installed (or no Go — it auto-installs). No source tree needed.
 
 ## Quick Start
 
@@ -106,7 +102,8 @@ Copy `./myimplant` to the target machine and run:
 ./myimplant
 ```
 
-The implant will discover the operator via DHT, register itself, and begin beaconing.
+The implant will discover the operator via DHT, register itself, and begin beaconing
+over a persistent relay stream with automatic keepalive.
 
 ### 4. Use the operator console
 
@@ -124,6 +121,8 @@ Available commands: `list`, `select <n>`, `exec <cmd>`, `ls <path>`, `cd <path>`
 `pwd`, `ps`, `shell`, `portfwd <port> <host:p>`, `download <path>`, `upload <path>`,
 `generate [flags]`, `regenerate`, `help [command]`, `exit`.
 
+In the interactive shell, type `exit` or press **Ctrl+]** to return to the arachne prompt.
+
 Use `help <command>` or `<command> --help` for per-command details.
 
 ## Available Commands
@@ -136,7 +135,7 @@ Use `help <command>` or `<command> --help` for per-command details.
 | `ls <path>` | List directory |
 | `cd <path>` | Change directory |
 | `pwd` | Print working directory |
-| `shell` | Interactive shell (direct libp2p stream) |
+| `shell` | Interactive shell (direct libp2p stream, Ctrl+] to exit) |
 | `portfwd <port> <host:p>` | Forward local port through implant |
 | `exec <cmd> [args]` | Execute command (with output) |
 | `download <path>` | Download file from implant |

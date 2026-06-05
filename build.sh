@@ -71,7 +71,19 @@ rm -rf "$EMBED_DIR/implant_src"
 
 mkdir -p bin
 
-echo "Building arachne (single binary)..."
-go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" -o bin/arachne ./cmd/arachne/
+build_platform() {
+	local goos="$1" goarch="$2" suffix="$3"
+	local out="bin/arachne-${goos}-${goarch}${suffix}"
+	echo "  building ${goos}/${goarch} -> ${out}..."
+	GOOS="$goos" GOARCH="$goarch" go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" -o "$out" ./cmd/arachne/
+}
 
-echo "Done. Binary in ./bin/arachne"
+echo "Building arachne (cross-platform)..."
+build_platform linux   amd64 ""
+build_platform linux   arm64 ""
+build_platform windows amd64 ".exe"
+build_platform windows arm64 ".exe"
+build_platform darwin  amd64 ""
+build_platform darwin  arm64 ""
+
+echo "Done. Binaries in ./bin/"
