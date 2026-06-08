@@ -63,6 +63,8 @@ GOEOF
 # Prune files not needed for compilation
 find "$EMBED_DIR/implant_src" -name "*.proto" -type f -delete
 find "$EMBED_DIR/implant_src" -name "*_test.go" -type f -delete
+# Remove any leftover test stubs (not antivm_stub.go which is real source)
+find "$EMBED_DIR/implant_src" -name "*_stub.go" ! -name "antivm_stub.go" -type f -delete
 
 
 # Compress the source tree (Go source code compresses extremely well)

