@@ -2,9 +2,14 @@ package core
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -15,6 +20,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -318,17 +324,39 @@ func findGo() string {
 			return candidate
 		}
 	}
+
+	goexe := "go"
+	if runtime.GOOS == "windows" {
+		goexe = "go.exe"
+	}
+
 	for _, p := range []string{
 		"/usr/local/go/bin/go",
-		filepath.Join(os.Getenv("HOME"), ".local", "go", "bin", "go"),
-		"/tmp/go/bin/go",
+		filepath.Join(os.Getenv("HOME"), ".local", "go", "bin", goexe),
+		"/tmp/go/bin/" + goexe,
 		"/usr/lib/go/bin/go",
+		`C:\Go\bin\go.exe`,
+		filepath.Join(os.Getenv("ProgramFiles"), "Go", "bin", "go.exe"),
+		filepath.Join(os.Getenv("LocalAppData"), "go", "bin", goexe),
 	} {
 		if fileExists(p) {
 			return p
 		}
 	}
-	return "go"
+	return goexe
+}
+
+type goFile struct {
+	Filename string `json:"filename"`
+	OS       string `json:"os"`
+	Arch     string `json:"arch"`
+	SHA256   string `json:"sha256"`
+}
+
+type goVersion struct {
+	Version string  `json:"version"`
+	Stable  bool    `json:"stable"`
+	Files   []goFile `json:"files"`
 }
 
 func ensureGo() (string, error) {
@@ -356,7 +384,19 @@ func ensureGo() (string, error) {
 		archName = "arm64"
 	}
 
-	resp, err := http.Get("https://go.dev/VERSION?m=text")
+	ext := ".tar.gz"
+	if osName == "windows" {
+		ext = ".zip"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://go.dev/VERSION?m=text", nil)
+	if err != nil {
+		return "", fmt.Errorf("create version request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("check go version: %w", err)
 	}
@@ -367,65 +407,174 @@ func ensureGo() (string, error) {
 	}
 	version := strings.TrimSpace(strings.Split(string(versionBytes), "\n")[0])
 
-	url := fmt.Sprintf("https://go.dev/dl/%s.%s-%s.tar.gz", version, osName, archName)
+	filename := fmt.Sprintf("%s.%s-%s%s", version, osName, archName, ext)
+	url := fmt.Sprintf("https://go.dev/dl/%s", filename)
+
+	// Fetch checksums from go.dev JSON API
+	checksums, err := fetchGoChecksums()
+	if err != nil {
+		return "", fmt.Errorf("fetch go checksums: %w", err)
+	}
+	expectedHash, ok := checksums[filename]
+	if !ok {
+		return "", fmt.Errorf("no checksum found for %s", filename)
+	}
+
 	log.Printf("downloading %s ...", url)
 
-	tarball, err := os.CreateTemp("", "go-*.tar.gz")
+	tarball, err := os.CreateTemp("", "go-*"+ext)
 	if err != nil {
 		return "", fmt.Errorf("create temp file: %w", err)
 	}
 	defer os.Remove(tarball.Name())
 
-	dlResp, err := http.Get(url)
+	dlCtx, dlCancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer dlCancel()
+	dlReq, err := http.NewRequestWithContext(dlCtx, "GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("create download request: %w", err)
+	}
+	dlResp, err := http.DefaultClient.Do(dlReq)
 	if err != nil {
 		return "", fmt.Errorf("download go: %w", err)
 	}
 	defer dlResp.Body.Close()
 
-	if _, err := io.Copy(tarball, dlResp.Body); err != nil {
-		return "", fmt.Errorf("write go tarball: %w", err)
+	hash := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(tarball, hash), dlResp.Body); err != nil {
+		return "", fmt.Errorf("write go archive: %w", err)
 	}
 	tarball.Close()
 
-	installDir := installGo(tarball.Name())
+	got := hex.EncodeToString(hash.Sum(nil))
+	if got != expectedHash {
+		return "", fmt.Errorf("checksum mismatch for %s:\n  expected: %s\n  got:      %s", filename, expectedHash, got)
+	}
+	log.Printf("SHA256 verified: %s", expectedHash)
+
+	installDir := installGo(tarball.Name(), osName)
 
 	log.Printf("Go %s installed at %s", version, installDir)
 	return filepath.Join(installDir, "bin", "go"), nil
 }
 
-func installGo(tarball string) string {
-	extract := func(dst string) error {
-		return exec.Command("tar", "-C", dst, "-xzf", tarball).Run()
+func fetchGoChecksums() (map[string]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://go.dev/dl/?mode=json&include=all", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create metadata request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("get go metadata: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var versions []goVersion
+	if err := json.NewDecoder(resp.Body).Decode(&versions); err != nil {
+		return nil, fmt.Errorf("decode go metadata: %w", err)
 	}
 
-	// Try direct (running as root or /usr/local writable)
-	os.RemoveAll("/usr/local/go")
-	if extract("/usr/local") == nil {
-		return "/usr/local/go"
+	checksums := make(map[string]string)
+	for _, v := range versions {
+		for _, f := range v.Files {
+			checksums[f.Filename] = f.SHA256
+		}
 	}
+	return checksums, nil
+}
 
-	// Try sudo
-	if exec.Command("sudo", "rm", "-rf", "/usr/local/go").Run() == nil &&
-		exec.Command("sudo", "tar", "-C", "/usr/local", "-xzf", tarball).Run() == nil {
-		return "/usr/local/go"
-	}
-
-	// Fallback: ~/.local/go
+func installGo(archive, osName string) string {
 	homeDir, _ := os.UserHomeDir()
-	localGo := filepath.Join(homeDir, ".local", "go")
-	os.RemoveAll(localGo)
-	os.MkdirAll(filepath.Dir(localGo), 0755)
-	if extract(filepath.Dir(localGo)) == nil {
-		// tar creates a go/ dir in the parent
-		if _, err := os.Stat(localGo); err == nil {
-			return localGo
+
+	candidates := []string{
+		"/usr/local/go",
+		filepath.Join(homeDir, ".local", "go"),
+		"/tmp/go",
+	}
+	if osName == "windows" {
+		progFiles := os.Getenv("ProgramFiles")
+		if progFiles == "" {
+			progFiles = `C:\Program Files`
+		}
+		candidates = []string{
+			filepath.Join(progFiles, "Go"),
+			filepath.Join(homeDir, "sdk", "go"),
+			filepath.Join(os.TempDir(), "go"),
 		}
 	}
 
-	// Last resort: /tmp/go
-	os.RemoveAll("/tmp/go")
-	extract("/tmp")
-	return "/tmp/go"
+	for _, dst := range candidates {
+		parent := filepath.Dir(dst)
+		os.RemoveAll(dst)
+		os.MkdirAll(parent, 0755)
+		if extractGoArchive(archive, parent, osName) == nil {
+			if _, err := os.Stat(dst); err == nil {
+				log.Printf("Go extracted to %s", dst)
+				return dst
+			}
+		}
+	}
+
+	// Last resort: always try the root of the temp dir
+	tmpRoot := "/tmp"
+	if osName == "windows" {
+		tmpRoot = os.TempDir()
+	}
+	os.RemoveAll(filepath.Join(tmpRoot, "go"))
+	extractGoArchive(archive, tmpRoot, osName)
+	return filepath.Join(tmpRoot, "go")
+}
+
+func extractGoArchive(archive, dst, osName string) error {
+	if osName == "windows" {
+		return extractZip(archive, dst)
+	}
+	return exec.Command("tar", "-C", dst, "-xzf", archive).Run()
+}
+
+func extractZip(src, dst string) error {
+	r, err := zip.OpenReader(src)
+	if err != nil {
+		return fmt.Errorf("open zip: %w", err)
+	}
+	defer r.Close()
+
+	for _, f := range r.File {
+		target := filepath.Join(dst, f.Name)
+
+		// ZipSlip protection
+		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(dst)+string(os.PathSeparator)) {
+			continue
+		}
+
+		if f.FileInfo().IsDir() {
+			os.MkdirAll(target, 0755)
+			continue
+		}
+
+		os.MkdirAll(filepath.Dir(target), 0755)
+
+		rc, err := f.Open()
+		if err != nil {
+			return fmt.Errorf("open %s in zip: %w", f.Name, err)
+		}
+
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, f.Mode())
+		if err != nil {
+			rc.Close()
+			return fmt.Errorf("create %s: %w", target, err)
+		}
+
+		_, err = io.Copy(out, rc)
+		rc.Close()
+		out.Close()
+		if err != nil {
+			return fmt.Errorf("extract %s: %w", f.Name, err)
+		}
+	}
+	return nil
 }
 
 func ensureGarble(goBin string) (string, error) {
@@ -445,14 +594,16 @@ func ensureGarble(goBin string) (string, error) {
 		return p, nil
 	}
 
-	// go install puts binaries in GOPATH/bin — check there
+	// go install puts binaries in GOPATH/bin — check each entry
 	gopathOut, _ := exec.Command(goBin, "env", "GOPATH").Output()
 	gopath := strings.TrimSpace(string(gopathOut))
 	if gopath != "" {
-		candidate := filepath.Join(gopath, "bin", "garble")
-		if fileExists(candidate) {
-			log.Print("garble installed")
-			return candidate, nil
+		for _, p := range filepath.SplitList(gopath) {
+			candidate := filepath.Join(p, "bin", "garble")
+			if fileExists(candidate) {
+				log.Print("garble installed")
+				return candidate, nil
+			}
 		}
 	}
 

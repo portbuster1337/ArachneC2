@@ -3,6 +3,8 @@ package transport
 import (
 	"context"
 	"fmt"
+	"log"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -27,6 +29,42 @@ type Messenger struct {
 	trustedPubKey crypto.PubKey
 	knownImplants map[string]crypto.PubKey
 	mu            sync.RWMutex
+	seenIDs       map[int64]time.Time
+	seenMu        sync.Mutex
+}
+
+const replayWindow = 5 * time.Minute
+
+func (m *Messenger) IsReplay(id int64) bool {
+	now := time.Now()
+
+	ts := time.Unix(0, id)
+	if now.Sub(ts) > replayWindow || ts.After(now) {
+		return true
+	}
+
+	m.seenMu.Lock()
+	defer m.seenMu.Unlock()
+
+	if m.seenIDs == nil {
+		m.seenIDs = make(map[int64]time.Time)
+	}
+
+	if _, dup := m.seenIDs[id]; dup {
+		return true
+	}
+
+	m.seenIDs[id] = now
+
+	if len(m.seenIDs) > 10000 {
+		for k, v := range m.seenIDs {
+			if now.Sub(v) > replayWindow {
+				delete(m.seenIDs, k)
+			}
+		}
+	}
+
+	return false
 }
 
 func NewOperatorMessenger(ctx context.Context, node *Node, keys *cryptography.OperatorKey) *Messenger {
@@ -133,7 +171,9 @@ func (m *Messenger) listenVerified(ctx context.Context, topic string, getTrusted
 	go func() {
 		defer sub.Cancel()
 		defer func() {
-			recover()
+			if r := recover(); r != nil {
+				log.Printf("[messenger] panic in listenVerified: %v\n%s", r, debug.Stack())
+			}
 		}()
 		for {
 			msg, err := sub.Next(ctx)
@@ -192,7 +232,9 @@ func (m *Messenger) ListenTask(ctx context.Context, implantPeerID string) error 
 
 func (m *Messenger) deliver(ctx context.Context, env *apb.Envelope) {
 	defer func() {
-		recover()
+		if r := recover(); r != nil {
+			log.Printf("[messenger] panic in deliver: %v\n%s", r, debug.Stack())
+		}
 	}()
 	m.mu.RLock()
 	handler := m.handler

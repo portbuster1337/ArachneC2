@@ -277,6 +277,11 @@ func (o *Operator) handleBeaconStream(s network.Stream) {
 }
 
 func (o *Operator) handleBeaconRegister(env *apb.Envelope) {
+	if o.messenger.IsReplay(env.ID) {
+		log.Printf("[operator] dropped replay beacon id=%d", env.ID)
+		return
+	}
+
 	beaconReg := &apb.Z1{}
 	if err := proto.Unmarshal(env.Data, beaconReg); err != nil {
 		log.Printf("[operator] unmarshal beacon register: %v", err)

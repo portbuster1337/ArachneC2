@@ -41,6 +41,8 @@ func checkHelp(args []string) bool {
 }
 
 func (o *Operator) RunCLI() {
+	os.MkdirAll(arachneDir(), 0700)
+
 	line := liner.NewLiner()
 	defer line.Close()
 
@@ -51,6 +53,7 @@ func (o *Operator) RunCLI() {
 		line.ReadHistory(f)
 		f.Close()
 	}
+	defer saveHistory(histPath, line)
 
 	var selected *ImplantRecord
 
@@ -74,7 +77,6 @@ func (o *Operator) RunCLI() {
 			if err == liner.ErrPromptAborted {
 				continue
 			}
-			saveHistory(histPath, line)
 			break
 		}
 		input = strings.TrimSpace(input)
@@ -90,10 +92,6 @@ func (o *Operator) RunCLI() {
 
 		switch cmd {
 		case "exit", "quit":
-			if f, err := os.Create(histPath); err == nil {
-				line.WriteHistory(f)
-				f.Close()
-			}
 			return
 
 		case "help":
@@ -321,6 +319,15 @@ func (o *Operator) RunCLI() {
 					}
 					username = u
 					password = p
+					hash, err := hashPassword(password)
+					if err != nil {
+						fmt.Printf("failed to hash password: %v\n", err)
+						continue
+					}
+					if err := SaveSocksCreds(&SocksCreds{Username: username, PasswordHash: hash}); err != nil {
+						fmt.Printf("failed to save socks creds: %v\n", err)
+						continue
+					}
 				}
 
 				targetID := idArg
@@ -332,8 +339,6 @@ func (o *Operator) RunCLI() {
 					}
 					targetID = peerID
 					fmt.Printf("using implant %s@%s\n", rec.Name, rec.Hostname)
-				} else {
-					fmt.Println("using random implant per request")
 				}
 				fmt.Printf("starting SOCKS5 proxy on 127.0.0.1:%d...\n", port)
 				if err := o.SocksStart(targetID, port, username, password); err != nil {

