@@ -112,12 +112,3 @@ Direct libp2p streams use short protocol IDs:
 | KILL | 14 | Op -> Implant | Self-terminate |
 | DISCONNECT | 255 | Bidirectional | Clean close |
 
-## 6. Data Exfiltration via IPFS
-
-For large data (files, screenshots, logs):
-1. Implant pins data to IPFS and gets a CID
-2. Implant sends a small envelope containing the CID + encryption key
-3. Operator fetches the data from IPFS using the CID
-4. Optionally decrypts with the key sent in-band
-
-This keeps the C2 channel low-bandwidth and hard to detect.

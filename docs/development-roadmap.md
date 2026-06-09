@@ -21,14 +21,14 @@
 - [x] Command execution (execute)
 - [x] Interactive shell (shell with PTY — direct libp2p stream)
 - [x] Screenshot capture (stub)
-- [~] Cross-platform support (Linux tested, Windows/macOS pending)
+- [x] Cross-platform support (Linux, macOS, Windows)
 - [x] Beacon interval + jitter configuration
 
 ## Phase 3: Interactive Sessions (Weeks 9-10)
 - [x] Direct libp2p stream establishment
 - [x] Interactive shell with PTY support
 - [x] Port forwarding (libp2p stream tunnel)
-- [ ] Reverse SOCKS proxy (implant-side proxy server)
+- [x] SOCKS5 proxy through implant
 - [ ] Session multiplexing
 
 ## Phase 4: IPFS Integration (Weeks 11-12)
@@ -43,13 +43,13 @@
 - [x] Implant generation from CLI (generate --os --arch --upx --output)
 - [x] Implant generation from interactive console ('generate' command)
 - [x] Persistent implant identity (embedded keypair per build)
-- [~] Interactive console (readline-based, pre-Cobra)
-- [ ] gRPC local API for GUI clients
+- [x] Interactive console (liner-based readline)
+- [ ] gRPC local API (service definitions exist, needs integration)
 - [ ] Multi-operator support
-- [ ] Full CLI (Cobra) with all commands
+- [ ] Proper CLI framework (flag-based commands)
 
 ## Phase 6: Advanced Features (Weeks 15-16)
-- [x] Evasion techniques (sandbox detection via `--antivm`, AMSI bypass)
+- [x] VM detection (`--antivm`: 65+ techniques, VMAware-compatible scoring, pure Go)
 - [ ] Process injection and migration
 - [ ] Windows token manipulation
 - [ ] Pivot through compromised implants
@@ -57,7 +57,7 @@
 
 ## Phase 7: Hardening (Ongoing)
 - [x] Cover traffic (random noise to mask beacon timing)
-- [x] Ephemeral implant PeerIDs (new key per session)
+- [x] Ephemeral implant PeerIDs (new key per build)
 - [ ] End-to-end encryption review
 - [ ] Traffic analysis resistance
 - [ ] Protocol fuzzing
@@ -75,8 +75,5 @@
 | DHT | [go-libp2p-kad-dht](https://github.com/libp2p/go-libp2p-kad-dht) |
 | Relay | [go-libp2p-circuit](https://github.com/libp2p/go-libp2p-circuit) |
 | PTY | [creack/pty](https://github.com/creack/pty) |
-| IPFS | [go-ipfs-api](https://github.com/ipfs/go-ipfs-api) or embedded |
-| CLI | [Cobra](https://github.com/spf13/cobra) |
-| TUI | [Bubble Tea](https://github.com/charmbracelet/bubbletea) |
-| RPC | [gRPC](https://grpc.io/) |
-| DB | SQLite (via [modernc.org/sqlite](https://modernc.org/sqlite)) |
+| CLI | [peterh/liner](https://github.com/peterh/liner) (readline) |
+| RPC | [gRPC](https://grpc.io/) (protos defined, not yet wired) |

@@ -22,6 +22,38 @@ communications, and command relay** — all without any central server, static I
 | Encryption | Per-binary asymmetric keys | libp2p noise/TLS + protobuf envelopes |
 | Implant comms | Polling / long-poll / DNS ticks | Direct streams + persistent beacon stream |
 
+## File Layout
+
+```
+cmd/arachne/main.go         — Entry point (dispatches to generate or run)
+├── server/core/
+│   ├── run.go               — Operator startup, key loading
+│   ├── operator.go          — Implant tracking, command dispatch, shell/portfwd
+│   ├── cli.go               — Interactive readline console
+│   ├── generate.go          — Implant cross-compilation (embeds source tree)
+│   ├── socks_proxy.go       — SOCKS5 proxy through implant
+│   └── embedsrc/embed.go    — Embedded implant source tarball
+├── implant/
+│   ├── main.go              — Implant entry point
+│   └── core/
+│       ├── agent.go         — Lifecycle, beacon loop, command handlers
+│       ├── shell.go         — Shell path selection
+│       ├── shell_unix.go    — PTY (Linux/macOS)
+│       ├── shell_windows.go — ConPTY (Windows)
+│       ├── portfwd.go       — Port forwarding tunnel
+│       ├── socks.go         — SOCKS tunnel
+│       ├── ps.go            — Process listing
+│       └── antivm*.go       — VM detection framework
+├── pkg/
+│   ├── transport/           — libp2p node, messenger, protocol IDs
+│   ├── cryptography/        — Ed25519 key operations
+│   └── config/              — Shared config types
+└── protobuf/                — Protocol Buffers definitions
+    ├── apb/                 — C2 messages (Z1-Z25, Envelope)
+    ├── rpb/                 — RPC service stubs (gRPC)
+    └── cpb/                 — Common types (Process, Request, Response)
+```
+
 ## High-Level Architecture
 
 ```
@@ -50,7 +82,7 @@ communications, and command relay** — all without any central server, static I
 
 ### 2. Implant Node (Agent)
 - Compiled with an **operator's public key** (embedded at build time)
-- Connects to IPFS/libp2p bootstrap peers or uses embedded peer list
+- Connects to libp2p bootstrap peers or uses embedded peer list
 - Opens persistent beacon stream to operator (`/bc/1.0.0`) with 5s keepalive
 - Receives commands on direct streams (`/bc/1.0.0/cmd`) and via pubsub fallback
 - Supports session mode (direct stream for shell, portfwd) over relay circuits
@@ -60,26 +92,20 @@ communications, and command relay** — all without any central server, static I
 - AutoNAT + relay protocol for NAT traversal
 - No special server software — standard libp2p relays
 
-### 4. IPFS Data Layer (Optional)
-- Exfiltrated files, screenshots, loot stored as IPFS objects (CID-addressed)
-- CIDs sent back via PubSub (small metadata only)
-- Data retrieved by operator via IPFS directly (no C2 channel needed for bulk data)
-
 ## Communication Model
 
 | Message Type | Transport | Pattern |
-|---|---|---|---|
+|---|---|---|
 | Beacon / Heartbeat | Persistent direct stream (`/bc/1.0.0`) | Implant → Operator |
 | Command dispatch | Direct stream (`/bc/1.0.0/cmd`) | Operator → Implant |
 | Task result | Beacon stream or pubsub fallback | Implant → Operator |
 | Interactive shell | Direct libp2p stream (`/x/sh/1.0.0`) | Bidirectional (Ctrl+] to exit) |
-| File download | Direct stream or IPFS | Stream or IPFS block fetch |
+| File download | Direct stream | Implant → Operator |
 | SOCKS / Portfwd | Direct stream (`/x/pf/1.0.0`) | Proxied through libp2p |
-| Pivot | Nested libp2p stream | Implant → Implant → Operator |
 
 ## Security Model
 
-- **Implant identity**: Each implant generates an ephemeral keypair on first run, signed by operator's key
+- **Implant identity**: Each build embeds a unique Ed25519 keypair — the implant keeps the same PeerID across restarts
 - **Encryption**: All libp2p transports are encrypted (Noise XX or TLS 1.3) per spec
 - **Message auth**: Envelopes are signed with the sender's private key
 - **Operator auth**: Only the operator with the correct private key can publish to `arachne/<op-id>/commands`
