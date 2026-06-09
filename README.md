@@ -158,6 +158,13 @@ Use `help <command>` or `<command> --help` for per-command details.
 - Peer identity is verified on every message via envelope signatures
 - Relay nodes see only encrypted bytes — cannot read or modify traffic
 
+## Disclaimer
+
+This software is provided for **educational and authorized security testing purposes only**.
+You must only use Arachne C2 on systems you own or have explicit written permission to test.
+Unauthorized access to computer systems is illegal. The authors assume no liability and are
+not responsible for any misuse or damage caused by this program.
+
 ## License
 
 GPLv3
