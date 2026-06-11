@@ -3,6 +3,7 @@
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/3c009f8e-1bc2-4620-854b-a5c53e108893" />
 
 
+
 A decentralized Command & Control framework built on **libp2p** (the peer-to-peer networking
 stack behind IPFS). No servers, no domains, no IPs to block — just cryptographic identities
 communicating over the global p2p network.
