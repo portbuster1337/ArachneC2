@@ -27,6 +27,7 @@ type Messenger struct {
 	privKey       crypto.PrivKey
 	operatorID    peer.ID
 	trustedPubKey crypto.PubKey
+	boxPubKey     *[32]byte
 	knownImplants map[string]crypto.PubKey
 	mu            sync.RWMutex
 	seenIDs       map[int64]time.Time
@@ -76,7 +77,7 @@ func NewOperatorMessenger(ctx context.Context, node *Node, keys *cryptography.Op
 	}
 }
 
-func NewImplantMessenger(ctx context.Context, node *Node, keys *cryptography.ImplantKey, operatorPub crypto.PubKey) *Messenger {
+func NewImplantMessenger(ctx context.Context, node *Node, keys *cryptography.ImplantKey, operatorPub crypto.PubKey, boxPubKey *[32]byte) *Messenger {
 	opID, err := peer.IDFromPublicKey(operatorPub)
 	if err != nil {
 		opID = peer.ID("")
@@ -86,6 +87,7 @@ func NewImplantMessenger(ctx context.Context, node *Node, keys *cryptography.Imp
 		privKey:       keys.PrivateKey,
 		operatorID:    opID,
 		trustedPubKey: operatorPub,
+		boxPubKey:     boxPubKey,
 		knownImplants: make(map[string]crypto.PubKey),
 	}
 }
@@ -261,6 +263,15 @@ func (m *Messenger) SignAndSend(ctx context.Context, topic string, env *apb.Enve
 	if m.privKey == nil {
 		return fmt.Errorf("no private key for signing")
 	}
+
+	if m.boxPubKey != nil && len(env.Data) > 0 {
+		encrypted, err := cryptography.EncryptMessage(env.Data, m.boxPubKey)
+		if err != nil {
+			return fmt.Errorf("encrypt: %w", err)
+		}
+		env.Data = encrypted
+	}
+
 	signingData, err := EnvelopeSigningBytes(env)
 	if err != nil {
 		return fmt.Errorf("marshal signing data: %w", err)

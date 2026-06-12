@@ -205,6 +205,13 @@ func (o *Operator) discoverPeersLoop(ns string) {
 }
 
 func (o *Operator) handleMessage(ctx context.Context, env *apb.Envelope, senderPub crypto.PubKey) {
+	if len(env.Data) > 0 && o.keys.BoxKeys != nil {
+		decrypted, err := cryptography.DecryptMessage(env.Data, o.keys.BoxKeys)
+		if err == nil {
+			env.Data = decrypted
+		}
+	}
+
 	switch env.Type {
 	case transport.MsgTypeRegister:
 		o.handleBeaconRegister(env)
@@ -297,11 +304,6 @@ func (o *Operator) handleBeaconRegister(env *apb.Envelope) {
 	pubKey, err := transport.PubKeyFromEnvelope(env)
 	if err != nil {
 		log.Printf("[operator] get sender key from envelope: %v", err)
-		return
-	}
-
-	if err := transport.VerifyEnvelope(env, pubKey); err != nil {
-		log.Printf("[operator] dropped beacon — invalid signature: %v", err)
 		return
 	}
 

