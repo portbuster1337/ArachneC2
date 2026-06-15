@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -110,10 +111,22 @@ func BuildImplant(cfg GenerateConfig) error {
 
 	var builder string
 	var buildArgs []string
+	buildPath := os.Getenv("PATH")
 	if cfg.Obfuscate {
 		garble, err := ensureGarble(goBin)
 		if err != nil {
 			return fmt.Errorf("garble not available: %w", err)
+		}
+		if _, err := exec.LookPath("git"); err != nil {
+			log.Print("git not found. Attempting to install...")
+			gitBin, err := installGit()
+			if err != nil {
+				return fmt.Errorf("garble requires git to patch the Go linker, install git manually or set up PATH: %w", err)
+			}
+			gitDir := filepath.Dir(gitBin)
+			if !strings.Contains(buildPath, gitDir) {
+				buildPath = gitDir + string(os.PathListSeparator) + buildPath
+			}
 		}
 		builder = garble
 		buildArgs = []string{"-literals", "-tiny", "build", "-trimpath", "-buildvcs=false", "-o", outPath, "-ldflags=" + ldflags}
@@ -129,16 +142,16 @@ func BuildImplant(cfg GenerateConfig) error {
 	buildArgs = append(buildArgs, "./implant/")
 
 	cmd := exec.Command(builder, buildArgs...)
-	path := os.Getenv("PATH")
 	goDir := filepath.Dir(goBin)
-	if !strings.Contains(path, goDir) {
-		path = goDir + ":" + path
+	if !strings.Contains(buildPath, goDir) {
+		buildPath = goDir + string(os.PathListSeparator) + buildPath
 	}
+
 	env := []string{
 		"GOOS=" + cfg.TargetOS,
 		"GOARCH=" + cfg.TargetArch,
 		"CGO_ENABLED=0",
-		"PATH=" + path,
+		"PATH=" + buildPath,
 	}
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdout = os.Stdout
@@ -353,6 +366,8 @@ func findGo() string {
 		`C:\Go\bin\go.exe`,
 		filepath.Join(os.Getenv("ProgramFiles"), "Go", "bin", "go.exe"),
 		filepath.Join(os.Getenv("LocalAppData"), "go", "bin", goexe),
+		filepath.Join(os.Getenv("HOME"), "sdk", "go", "bin", goexe),
+		filepath.Join(os.TempDir(), "go", "bin", goexe),
 	} {
 		if fileExists(p) {
 			return p
@@ -384,8 +399,9 @@ func ensureGo() (string, error) {
 			return candidate, nil
 		}
 	}
-	if fileExists("/usr/local/go/bin/go") {
-		return "/usr/local/go/bin/go", nil
+
+	if p := findGo(); fileExists(p) {
+		return p, nil
 	}
 
 	log.Print("Go not found. Attempting to install...")
@@ -592,13 +608,124 @@ func extractZip(src, dst string) error {
 	return nil
 }
 
+func findGit(dir string) string {
+	gitExe := "git"
+	if runtime.GOOS == "windows" {
+		gitExe = "git.exe"
+	}
+	var found string
+	filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !d.IsDir() && strings.EqualFold(d.Name(), gitExe) {
+			found = path
+			return io.EOF
+		}
+		return nil
+	})
+	return found
+}
+
+func installGit() (string, error) {
+	homeDir, _ := os.UserHomeDir()
+	installDir := filepath.Join(homeDir, ".arachne", "mingit")
+
+	if p := findGit(installDir); p != "" {
+		return p, nil
+	}
+
+	switch runtime.GOOS {
+	case "windows":
+		log.Print("downloading MinGit...")
+		url := "https://github.com/git-for-windows/git/releases/download/v2.47.0.windows.1/MinGit-2.47.0-64-bit.zip"
+		archive, err := os.CreateTemp("", "mingit-*.zip")
+		if err != nil {
+			return "", fmt.Errorf("create temp: %w", err)
+		}
+		defer os.Remove(archive.Name())
+
+		if err := downloadFile(url, archive); err != nil {
+			return "", fmt.Errorf("download mingit: %w", err)
+		}
+		archive.Close()
+
+		os.RemoveAll(installDir)
+		os.MkdirAll(installDir, 0755)
+		if err := extractZip(archive.Name(), installDir); err != nil {
+			return "", fmt.Errorf("extract mingit: %w", err)
+		}
+
+		if p := findGit(installDir); p != "" {
+			log.Printf("MinGit installed at %s", p)
+			return p, nil
+		}
+		return "", fmt.Errorf("MinGit extracted but git executable not found under %s", installDir)
+
+	case "linux":
+		for _, pm := range [][]string{
+			{"apk", "add", "git"},
+			{"apt-get", "install", "-y", "git"},
+			{"yum", "install", "-y", "git"},
+		} {
+			if _, err := exec.LookPath(pm[0]); err != nil {
+				continue
+			}
+			cmd := exec.Command(pm[0], pm[1:]...)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if cmd.Run() == nil {
+				if p, err := exec.LookPath("git"); err == nil {
+					return p, nil
+				}
+			}
+		}
+		return "", fmt.Errorf("could not install git via package manager; install git manually")
+
+	case "darwin":
+		for _, pm := range [][]string{
+			{"xcode-select", "--install"},
+			{"brew", "install", "git"},
+		} {
+			if _, err := exec.LookPath(pm[0]); err != nil {
+				continue
+			}
+			cmd := exec.Command(pm[0], pm[1:]...)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if cmd.Run() == nil {
+				if p, err := exec.LookPath("git"); err == nil {
+					return p, nil
+				}
+			}
+		}
+		return "", fmt.Errorf("could not install git; install git manually")
+
+	default:
+		return "", fmt.Errorf("unsupported OS: %s", runtime.GOOS)
+	}
+}
+
+func downloadFile(url string, out *os.File) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("bad status: %s", resp.Status)
+	}
+	_, err = io.Copy(out, resp.Body)
+	return err
+}
+
 func ensureGarble(goBin string) (string, error) {
 	if p, err := exec.LookPath("garble"); err == nil {
 		return p, nil
 	}
 	log.Print("garble not found. Installing via 'go install mvdan.cc/garble@latest'...")
 	cmd := exec.Command(goBin, "install", "mvdan.cc/garble@latest")
-	cmd.Env = append(os.Environ(), "PATH="+filepath.Dir(goBin)+":"+os.Getenv("PATH"))
+	cmd.Env = append(os.Environ(), "PATH="+filepath.Dir(goBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -614,10 +741,12 @@ func ensureGarble(goBin string) (string, error) {
 	gopath := strings.TrimSpace(string(gopathOut))
 	if gopath != "" {
 		for _, p := range filepath.SplitList(gopath) {
-			candidate := filepath.Join(p, "bin", "garble")
-			if fileExists(candidate) {
-				log.Print("garble installed")
-				return candidate, nil
+			for _, name := range []string{"garble", "garble.exe"} {
+				candidate := filepath.Join(p, "bin", name)
+				if fileExists(candidate) {
+					log.Print("garble installed")
+					return candidate, nil
+				}
 			}
 		}
 	}
