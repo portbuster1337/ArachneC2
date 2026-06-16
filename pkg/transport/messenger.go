@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -37,13 +38,6 @@ type Messenger struct {
 const replayWindow = 5 * time.Minute
 
 func (m *Messenger) IsReplay(id int64) bool {
-	now := time.Now()
-
-	ts := time.Unix(0, id)
-	if now.Sub(ts) > replayWindow || ts.After(now) {
-		return true
-	}
-
 	m.seenMu.Lock()
 	defer m.seenMu.Unlock()
 
@@ -55,11 +49,12 @@ func (m *Messenger) IsReplay(id int64) bool {
 		return true
 	}
 
-	m.seenIDs[id] = now
+	m.seenIDs[id] = time.Now()
 
 	if len(m.seenIDs) > 10000 {
+		cutoff := time.Now().Add(-replayWindow)
 		for k, v := range m.seenIDs {
-			if now.Sub(v) > replayWindow {
+			if v.Before(cutoff) {
 				delete(m.seenIDs, k)
 			}
 		}
@@ -291,7 +286,7 @@ func (m *Messenger) SignAndSend(ctx context.Context, topic string, env *apb.Enve
 
 func (m *Messenger) CreateEnvelope(msgType uint32, data []byte) *apb.Envelope {
 	return &apb.Envelope{
-		ID:   time.Now().UnixNano(),
+		ID:   rand.Int63(),
 		Type: msgType,
 		Data: data,
 	}
