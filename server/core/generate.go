@@ -293,7 +293,10 @@ func extractEmbeddedSource(dst string) error {
 			return fmt.Errorf("tar next: %w", err)
 		}
 
-		target := filepath.Join(dst, hdr.Name)
+		target, err := safeArchiveTarget(dst, hdr.Name)
+		if err != nil {
+			return err
+		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0755); err != nil {
@@ -303,7 +306,7 @@ func extractEmbeddedSource(dst string) error {
 			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 				return err
 			}
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR, os.FileMode(hdr.Mode))
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode))
 			if err != nil {
 				return err
 			}
@@ -315,6 +318,29 @@ func extractEmbeddedSource(dst string) error {
 		}
 	}
 	return nil
+}
+
+func safeArchiveTarget(dst, name string) (string, error) {
+	if filepath.IsAbs(name) {
+		return "", fmt.Errorf("archive entry has absolute path: %s", name)
+	}
+
+	cleanName := filepath.Clean(name)
+	if cleanName == "." {
+		return filepath.Clean(dst), nil
+	}
+	if cleanName == ".." || strings.HasPrefix(cleanName, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("archive entry escapes destination: %s", name)
+	}
+
+	target := filepath.Join(dst, cleanName)
+	cleanDst := filepath.Clean(dst)
+	cleanTarget := filepath.Clean(target)
+	if cleanTarget != cleanDst && !strings.HasPrefix(cleanTarget, cleanDst+string(os.PathSeparator)) {
+		return "", fmt.Errorf("archive entry escapes destination: %s", name)
+	}
+
+	return target, nil
 }
 
 func defaultPubKeyPath() string {
@@ -384,8 +410,8 @@ type goFile struct {
 }
 
 type goVersion struct {
-	Version string  `json:"version"`
-	Stable  bool    `json:"stable"`
+	Version string   `json:"version"`
+	Stable  bool     `json:"stable"`
 	Files   []goFile `json:"files"`
 }
 
